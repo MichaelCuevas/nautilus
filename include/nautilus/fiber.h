@@ -162,6 +162,10 @@ int nk_fiber_conditional_yield_to(nk_fiber_t *f_to, int earlyRetFlag, uint8_t (*
 */
 nk_fiber_t *nk_fiber_fork();
 
+/* specify which cpu to place forked fibers on for the current CPU */
+/* Other fibers can change fork_cpu, so user must call fork before yielding to guarantee fiber is forked onto the specified CPU */
+int nk_fiber_set_fork_cpu(int target_cpu);
+
 // Causes the currently running fiber to wait on the specified fiber's wait queue (waits until that fiber exits) 
 int nk_fiber_join(nk_fiber_t *wait_on);
 
