@@ -112,6 +112,9 @@ typedef struct nk_fiber {
 // Returns the fiber that is currently running on this CPU
 nk_fiber_t *nk_fiber_current();
 
+// Returns 1 if the fiber queue for curr cpu is empty, 0 otherwise
+int nk_fiber_queue_empty();
+
 // Create a fiber but do not launch it
 int nk_fiber_create(nk_fiber_fun_t fun,
                     void *input,

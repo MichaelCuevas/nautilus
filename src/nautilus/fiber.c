@@ -136,6 +136,11 @@ static spinlock_t *_get_sched_queue_lock()
   return &(get_cpu()->f_state->lock); 
 }
 
+// checks if fiber queue for current CPU is empty
+int nk_fiber_queue_empty() {
+  return list_empty_careful(_get_sched_head());
+}
+
 // utility function for setting up  a fiber's stack 
 static void _fiber_push(nk_fiber_t * f, uint64_t x)
 {
