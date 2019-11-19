@@ -31,6 +31,7 @@
 #include <nautilus/scheduler.h>
 #include <nautilus/shell.h>
 #include <nautilus/vc.h>
+#include <nautilus/barrier.h>
 
 #define DO_PRINT       0
 
@@ -43,6 +44,12 @@
 struct nk_virtual_console *vc;
 nk_fiber_t *first_l;
 nk_fiber_t *second_l;
+
+typedef struct fib_bar_inp {
+   nk_counting_barrier_t *f_bar;
+   int n;
+} f_input;
+
 
 /******************* Test Routines *******************/
 
@@ -406,6 +413,15 @@ void new_yield_2(void *i, void **o)
   nk_vc_printf("new_yield_2 finished.\n");
 }
 
+void fiber_bar(void *i, void **o)
+{
+  f_input *inp = (f_input*)i;
+  nk_counting_barrier_t *bar = inp->f_bar;
+  int n = inp->n;
+  nk_fiber_counting_barrier(bar);
+  int k = my_cpu_id(); 
+  nk_vc_printf("test_fiber_barriers() : Fiber %d made it past the barrier on cpu %d\n", n, k);
+}
 
 /******************* Test Wrappers *******************/
 
@@ -611,7 +627,28 @@ int test_new_yield(){
   return 0;
 }
 
-
+int test_fiber_barriers()
+{
+  nk_counting_barrier_t *bar = malloc(sizeof(nk_counting_barrier_t));
+  nk_counting_barrier_init(bar, 10);
+  int i;
+  nk_vc_printf("test_fiber_barriers() : Barrier size %d\n", bar->size);
+  nk_fiber_t *fibers[10];
+  for (i=0; i < 10; i++) {
+    f_input *inp = malloc(sizeof(f_input));
+    if (!inp) {
+      panic("malloc failed");
+      return 1;
+    }
+    memset(inp,0,sizeof(*inp));
+    inp->f_bar = bar;
+    inp->n = i;
+    nk_vc_printf("test_fiber_barriers() : Started fiber %d\n", i);
+    nk_fiber_start(fiber_bar, (void*)inp, 0, 0, F_RAND_CPU, &(fibers[i]));
+  }
+  return 0;
+} 
+ 
 /******************* Test Handlers *******************/
 
 static int
@@ -748,6 +785,11 @@ static int handle_fibers12 (char *buf, void *priv)
   return 0;
 }
 
+static int handle_fibers13(char *buf, void *priv)
+{
+  test_fiber_barriers();
+  return 0;
+}
   
 /******************* Shell Structs ********************/
 
@@ -841,6 +883,11 @@ static struct shell_cmd_impl fibers_impl_new_yield = {
   .handler  = handle_fibers12,
 };
 
+static struct shell_cmd_impl fibers_impl_barrier = {
+  .cmd      = "fiberbar",
+  .help_str = "fiberbar",
+  .handler  = handle_fibers13,
+};
 /******************* Shell Commands *******************/
 
 nk_register_shell_cmd(fibers_impl1);
@@ -858,3 +905,4 @@ nk_register_shell_cmd(fibers_impl_all);
 nk_register_shell_cmd(fibers_impl_all_1);
 nk_register_shell_cmd(fibers_impl_all_2);
 nk_register_shell_cmd(fibers_impl_new_yield);
+nk_register_shell_cmd(fibers_impl_barrier);

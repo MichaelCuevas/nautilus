@@ -121,18 +121,26 @@ static inline void nk_fiber_counting_barrier(volatile nk_counting_barrier_t *b)
         *countp = 0;
 	__asm__ __volatile__ ("mfence" : : : "memory");
     } else {
-        while (old) {
-            while (old && !(nk_fiber_queue_empty())) {
+        while (({ __asm__ __volatile__( "movq %1, %0" : "=r"(old) : "m"(*countp) : ); old; })) {
+            /*while (({ __asm__ __volatile__( "movq %1, %0" : "=r"(old) : "m"(*countp) : ); old; }) && !(nk_fiber_queue_empty())) {
                if (!(n%20)) {
                     nk_fiber_yield();
                     n++;
                 } else {
                     n++;
                 }
+            }
+            if (old == 0) {
+              break;
             } 
-            while (old && nk_fiber_queue_empty()) {
+            while (({ __asm__ __volatile__( "movq %1, %0" : "=r"(old) : "m"(*countp) : ); old; }) && nk_fiber_queue_empty()) {
                n++; 
-            } 
+            }
+            if (old == 0) {
+              break;
+            }
+            */
+            nk_fiber_yield();
         }
     }
 }

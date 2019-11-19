@@ -342,11 +342,12 @@ static float pspeedy(Points *points, float z, long *kcenter, int pid, pthread_ba
   unsigned long myround=0;
   
 // TODO MAC: switch to fiber usage
+/*
 #ifdef ENABLE_THREADS
   static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
   static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 #endif
-
+*/
 #ifdef PRINTINFO
   if( pid == 0 ){
     fprintf(stderr, "Speedy: facility cost %lf\n", z);
@@ -1144,7 +1145,7 @@ typedef struct _pkmedian_arg_t
 static void* localSearchSub(void* arg_, void** output) {
 
 
-  nk_bind_vc(get_cur_thread(),get_cur_thread()->parent->vc);
+  //nk_bind_vc(get_cur_thread(),get_cur_thread()->parent->vc);
   
   pkmedian_arg_t* arg= (pkmedian_arg_t*)arg_;
 
@@ -1167,7 +1168,7 @@ static void* localSearchSub(void* arg_, void** output) {
 // TODO MAC: switch to fiber usage
   nk_fiber_counting_barrier(arg->barrier); // wait for everyone to join group
     
-// TODO MAC: switch to fiber usage
+/* TODO MAC: switch to fiber usage
     if (schedconst) {
 	DEBUG("group change constraint\n");
 	// do a group change constraint
@@ -1175,7 +1176,7 @@ static void* localSearchSub(void* arg_, void** output) {
     } else {
 	DEBUG("no group change constraint\n");
     }
-
+*/
     DEBUG("pkmedian starts\n");
 
         
@@ -1196,19 +1197,18 @@ static void localSearch( Points* points, long kmin, long kmax, long* kfinal ) {
 #endif
 
 
-// TODO MAC: switch to fiber usage
 /*  if (schedconst) {
       // set up a group for our use
       group = nk_thread_group_create("foofighters");
  }*/
   
-// TODO MAC: switch to fiber usage
     pthread_barrier_t barrier;
+
 #ifdef ENABLE_THREADS
     DEBUG("barrier init for %d procs\n",nproc);
     pthread_barrier_init(&barrier,NULL,nproc);
 #endif
-    pthread_t* threads = newa(pthread_t*, nproc);
+    pthread_t* threads = newa(pthread_t, nproc);
     pkmedian_arg_t* arg = newa(pkmedian_arg_t,nproc);
 
 
@@ -1224,7 +1224,7 @@ static void localSearch( Points* points, long kmin, long kmax, long* kfinal ) {
 #ifdef ENABLE_THREADS
       int targetproc = startproc!=-1 ? startproc+i : -1;
       //nk_thread_start((nk_thread_fun_t)localSearchSub,(void*)&arg[i],0,0,TSTACK_DEFAULT,threads+i,targetproc);
-      nk_fiber_start((nk_fiber_fun_t)localSearchSub,(void*)&arg[i],0,0,targetproc,&(threads[i]));
+      nk_fiber_start((nk_fiber_fun_t)localSearchSub,(void*)&arg[i],0,0,i,&(threads[i]));
       // pthread_create(threads+i,NULL,localSearchSub,(void*)&arg[i]);
 #else
       localSearchSub(&arg[0]);
@@ -1232,22 +1232,22 @@ static void localSearch( Points* points, long kmin, long kmax, long* kfinal ) {
     }
 
     for ( int i = 0; i < nproc; i++) {
-// TODO MAC: switch to fiber usage
+
 #ifdef ENABLE_THREADS
-     // pthread_join(threads[i]);
+   pthread_join(threads[i]);
 #endif
     }
 
     dela(threads);
     dela(arg);
-// TODO MAC: switch to fiber usage
 #ifdef ENABLE_THREADS
     pthread_barrier_destroy(&barrier);
 #endif
-
+/*
     if (group) {
 	nk_thread_group_delete(group);
     }
+*/
 
 #ifdef PROFILE
   double t2 = gettime();
@@ -1358,6 +1358,7 @@ static void streamCluster( PStream* stream,
     is_center = (bool*)calloc(points.num,sizeof(bool));
     center_table = (int*)malloc(points.num*sizeof(int));
 
+    // Start a fiber ? use fibers for the whole thing?
     localSearch(&points,kmin, kmax,&kfinal);
 
     fprintf(stderr,"finish local search\n");
@@ -1365,7 +1366,7 @@ static void streamCluster( PStream* stream,
     if( kfinal + centers.num > centersize ) {
       //here we don't handle the situation where # of centers gets too large. 
       fprintf(stderr,"oops! no more space for centers\n");
-      exit(1);
+      //exit(1);
     }
 
 #ifdef PRINTINFO
@@ -1421,12 +1422,12 @@ int test_orig_streamcluster(int numt, int startp, int nobarrier,
 
   // configured as per run script
   
-  kmin = 10;
-  kmax = 20;
-  dim = 256;
-  n = 65536;
-  chunksize = 65536;
-  clustersize = 1000;
+  kmin = 2;
+  kmax = 5;
+  dim = 1;
+  n = 10;
+  chunksize = 10;
+  clustersize = 5;
   strcpy(infilename, "none");
   strcpy(outfilename, "output.txt");
   nproc = numt;
@@ -1482,9 +1483,23 @@ int test_orig_streamcluster(int numt, int startp, int nobarrier,
   return 0;
 }
 
+void fiber_streamcluster(void *in, void **out)
+{
+    int *input = (int *)in;
+    test_orig_streamcluster(input[0], input[1], input[2], 0);
+}
+
 static int handle_streamcluster (char *buf, void *priv)
 {
-  test_orig_streamcluster(3,1,0,0);
+  int *in = malloc(sizeof(int)*3);
+  in[0] = 3;
+  in[1] = 1;
+  in[2] = 0;
+  if (!in) {
+    panic("handle_streamcluster() : malloc failed \n");
+  }
+  nk_fiber_t *fib;
+  nk_fiber_start(fiber_streamcluster, (void*)in, 0, 0, F_RAND_CPU, &fib); 
   return 0;
 }
 
