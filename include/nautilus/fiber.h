@@ -188,7 +188,7 @@ void nk_fiber_startup();
 #endif /* !__ASSEMBLER */
 
 #define FIBER_SAVE_GPRS() \
-    subq $120, %rsp;    \
+    subq $128, %rsp;    \
     movq %rax, 112(%rsp); \
     movq %rbx, 104(%rsp); \
     movq %rcx, 96(%rsp); \
@@ -221,7 +221,7 @@ void nk_fiber_startup();
     movq 96(%rsp), %rcx; \
     movq 104(%rsp), %rbx; \
     movq 112(%rsp), %rax; \
-    addq $120, %rsp;
+    addq $128, %rsp;
 
 /* Only restores callee saved registers since yield did not occur*/
 #define FIBER_RESTORE_GPRS_EARLY() \
@@ -234,7 +234,7 @@ void nk_fiber_startup();
     movq 80(%rsp), %rsi; \
     movq 104(%rsp), %rbx; \
     movq 112(%rsp), %rax; \
-    addq $120, %rsp;
+    addq $128, %rsp;
 
 #define FIBER_RESTORE_GPRS_NOT_RAX() \
     movq (%rsp), %r15; \
@@ -251,7 +251,7 @@ void nk_fiber_startup();
     movq 88(%rsp), %rdx; \
     movq 96(%rsp), %rcx; \
     movq 104(%rsp), %rbx; \
-    addq $120, %rsp;
+    addq $128, %rsp;
 
 /******* Experimental way to context switch *******/
 
