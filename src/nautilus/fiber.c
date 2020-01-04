@@ -361,7 +361,7 @@ static void _nk_fiber_init(nk_fiber_t *f)
 __attribute__((noreturn)) static void _nk_fiber_yield_helper(nk_fiber_t *f_to, fiber_state *state, nk_fiber_t* f_from)
 {
   // If a fiber is not waiting or exiting, change its status to yielding
-  if (f_from->f_status == READY && !(f_from->is_idle)) {
+  if (f_from->f_status == F_READY && !(f_from->is_idle)) {
     f_from->f_status = YIELD;
   }
   
@@ -395,7 +395,7 @@ __attribute__((noreturn)) static void _nk_fiber_yield_helper(nk_fiber_t *f_to, f
     //FIBER_DEBUG("_nk_fiber_yield_helper() : About to enqueue fiber: %p \n", f_from);
     
     _LOCK_FIBER(f_from);
-    f_from->f_status = READY;
+    f_from->f_status = F_READY;
     f_from->curr_cpu = my_cpu_id();
     _UNLOCK_FIBER(f_from);
 
@@ -525,7 +525,7 @@ static fiber_state *_get_random_fiber_state()
 static int _check_yield_to(nk_fiber_t *to_del) {
   _LOCK_FIBER(to_del);
   // If the fiber isn't ready to switch to, indicate failure.
-  if (to_del->f_status != READY) {
+  if (to_del->f_status != F_READY) {
      FIBER_DEBUG("_check_yield_to() : to_del's status is %s\n", to_del->f_status);
      _UNLOCK_FIBER(to_del);
      return -EINVAL;
@@ -946,7 +946,7 @@ int nk_fiber_run(nk_fiber_t *f, int target_cpu)
   // Lock the fiber, change it's curr cpu, and change status to ready (since we are about to queue it)
   _LOCK_FIBER(f);
   f->curr_cpu = t_cpu;
-  f->f_status = READY;
+  f->f_status = F_READY;
   
   // Lock the CPU fiber state and enqueue the fiber into sched queue 
   _LOCK_SCHED_QUEUE(state);

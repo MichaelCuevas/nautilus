@@ -68,7 +68,7 @@ typedef struct TreeNode TreeNode_t;
 typedef void (*nk_fiber_fun_t)(void *input, void **output);
 
 typedef enum {  INIT,               // Being initialized
-           READY,               // Ready to be run, on a wait queue
+           F_READY,               // Ready to be run, on a wait queue
 	       YIELD,           // in process of yielding
            WAIT,           // being removed from fiber queue
                                // probably due to having been put into a wait queue
