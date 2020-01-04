@@ -269,6 +269,19 @@ static int launch_vmm_environment()
 
 extern struct naut_info * smp_ap_stack_switch(uint64_t, uint64_t, struct naut_info*);
 
+static  char *runScript[] = {
+        "fibertime1",
+        "fibertime1",
+        "fibertime1",
+        "fibertime1",
+        "fibertime1",
+        "fibertime1",
+        "fibertime1",
+        "fibertime1",
+        "fibertime1",
+        "fibertime1",
+        };
+
 void
 init (unsigned long mbd,
       unsigned long magic)
@@ -534,7 +547,7 @@ init (unsigned long mbd,
     nk_run_tests(naut);
 #endif
 
-    nk_launch_shell("root-shell",0,0,0);
+    nk_launch_shell("root-shell",0,runScript,0);
 
     runtime_init();
 

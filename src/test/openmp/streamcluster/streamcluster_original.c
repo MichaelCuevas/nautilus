@@ -35,7 +35,8 @@
 #include <nautilus/barrier.h>
 #include <nautilus/scheduler.h>
 #include <nautilus/group_sched.h>
-
+#include <nautilus/shell.h>
+#include <nautilus/vc.h>
 
 #define INFO(fmt, args...) INFO_PRINT("scorg: " fmt, ##args)
 #define ERROR(fmt, args...) ERROR_PRINT("scorg: " fmt, ##args)
@@ -1353,12 +1354,12 @@ int test_orig_streamcluster(int numt, int startp, int nobarrier,
 
   // configured as per run script
   
-  kmin = 10;
-  kmax = 20;
-  dim = 256;
-  n = 65536;
-  chunksize = 65536;
-  clustersize = 1000;
+  kmin = 2;
+  kmax = 5;
+  dim = 1;
+  n = 10;
+  chunksize = 10;
+  clustersize = 5;
   strcpy(infilename, "none");
   strcpy(outfilename, "output.txt");
   nproc = numt;
@@ -1413,3 +1414,17 @@ int test_orig_streamcluster(int numt, int startp, int nobarrier,
   
   return 0;
 }
+
+static int fiber_streamcluster (char *buf, void *priv)
+{
+    test_orig_streamcluster(3, 1, 0, 0);
+    return 0;
+}
+
+static struct shell_cmd_impl streamcluster_imp = {
+  .cmd = "scorig",
+  .help_str = "scorig",
+  .handler = fiber_streamcluster,
+};
+
+nk_register_shell_cmd(streamcluster_imp);

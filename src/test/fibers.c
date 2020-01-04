@@ -27,6 +27,7 @@
 
 #include <nautilus/nautilus.h>
 #include <nautilus/thread.h>
+#include <nautilus/timer.h>
 #include <nautilus/fiber.h>
 #include <nautilus/scheduler.h>
 #include <nautilus/shell.h>
@@ -45,11 +46,15 @@ struct nk_virtual_console *vc;
 nk_fiber_t *first_l;
 nk_fiber_t *second_l;
 
+nk_thread_t *sleeping_thread;
+
 typedef struct fib_bar_inp {
    nk_counting_barrier_t *f_bar;
    int n;
 } f_input;
 
+int *cycleCount1;
+int *cycleCount2;
 
 /******************* Test Routines *******************/
 
@@ -329,7 +334,7 @@ void fiber_routine3(void *i, void **o)
   nk_vc_printf("fiber_routine3() : fiber %p is finished, a = %d\n", nk_fiber_current(), a);
 }
 
-#define N 1000000
+#define N 10000000
 void first_timer(void *i, void **o)
 {
   nk_fiber_set_vc(vc);
@@ -337,6 +342,7 @@ void first_timer(void *i, void **o)
   rdtsc();
   uint64_t start = rdtsc();
   uint64_t end = rdtsc();
+  uint64_t timerTime = end-start;
   while(a < N){
     if (a == 2) {
         start = rdtsc();
@@ -345,7 +351,8 @@ void first_timer(void *i, void **o)
     a++;
   }
   end = rdtsc();
-  nk_vc_printf("First Timer is finished, a = %d, cycle count = %d, cycles per iteration = %d\n", a, end-start, (end-start)/N);
+  //nk_vc_printf("First Timer is finished, a = %d, cycle count = %d, cycles per iteration = %d\n", a, end-start, (end-start)/N);
+  nk_vc_printf("CPU: %d, Cycles per iteration: %d, Timer cost: %d\n", my_cpu_id(), (end-start)/N, timerTime);
 }
 
 void second_timer(void *i, void **o)
@@ -356,7 +363,7 @@ void second_timer(void *i, void **o)
     nk_fiber_yield();
     a++;
   }
-  nk_vc_printf("Second Timer is finished, a = %d\n", a);
+  //nk_vc_printf("Second Timer is finished, a = %d\n", a);
 }
 
 extern void _nk_fiber_context_switch(nk_fiber_t *curr, nk_fiber_t *next);
@@ -375,7 +382,7 @@ void first_lower(void *i, void **o)
     a++;
   }
   end = rdtsc();
-  nk_vc_printf("First Timer is finished, a = %d, cycle count = %d, cycles per iteration = %d\n", a, end-start, (end-start)/N);
+  //nk_vc_printf("First Timer is finished, a = %d, cycle count = %d, cycles per iteration = %d\n", a, end-start, (end-start)/N);
 }  
 
 void second_lower(void *i, void **o)
@@ -386,7 +393,7 @@ void second_lower(void *i, void **o)
     _nk_fiber_context_switch(second_l, first_l);
     a++;
   }
-  nk_vc_printf("Second Timer is finished, a = %d\n", a);
+  //nk_vc_printf("Second Timer is finished, a = %d\n", a);
 }
 
 void new_yield_1(void *i, void **o)
@@ -584,7 +591,7 @@ int test_fiber_routine_2()
   return 0;
 }
 
-int test_fiber_timing(){
+int test_fiber_timing(int target_cpu){
   nk_fiber_t *first;
   nk_fiber_t *second;
   vc = get_cur_thread()->vc;
@@ -598,8 +605,9 @@ int test_fiber_timing(){
     return  -1;
   }
   // NO ERROR CHECKING (SO TIMING RESULTS ARE NOT SKEWED) 
-  nk_fiber_run(first, F_CURR_CPU);
-  nk_fiber_run(second, F_CURR_CPU);
+  nk_fiber_run(first, target_cpu);
+  nk_fiber_run(second, target_cpu);
+  nk_sleep(8000000000);
   return 0;
 }
 
@@ -721,7 +729,21 @@ handle_fibers9 (char * buf, void * priv)
 static int
 handle_fibers10 (char * buf, void * priv)
 {
-  test_fiber_timing();
+  test_fiber_timing(1);
+  return 0;
+}
+
+static int
+handle_fibers100 (char * buf, void * priv)
+{
+  test_fiber_timing(10);
+  return 0;
+}
+
+static int
+handle_fibers1000 (char * buf, void * priv)
+{
+  test_fiber_timing(100);
   return 0;
 }
 
@@ -853,6 +875,18 @@ static struct shell_cmd_impl fibers_impl10 = {
   .handler  = handle_fibers10,
 };
 
+static struct shell_cmd_impl fibers_impl100 = {
+  .cmd      = "fibertime10",
+  .help_str = "fibertime10",
+  .handler  = handle_fibers100,
+};
+
+static struct shell_cmd_impl fibers_impl1000 = {
+  .cmd      = "fibertime100",
+  .help_str = "fibertime100",
+  .handler  = handle_fibers1000,
+};
+
 static struct shell_cmd_impl fibers_impl11 = {
   .cmd      = "fibertime2",
   .help_str = "fibertime2",
@@ -900,6 +934,8 @@ nk_register_shell_cmd(fibers_impl7);
 nk_register_shell_cmd(fibers_impl8);
 nk_register_shell_cmd(fibers_impl9);
 nk_register_shell_cmd(fibers_impl10);
+nk_register_shell_cmd(fibers_impl100);
+nk_register_shell_cmd(fibers_impl1000);
 nk_register_shell_cmd(fibers_impl11);
 nk_register_shell_cmd(fibers_impl_all);
 nk_register_shell_cmd(fibers_impl_all_1);
