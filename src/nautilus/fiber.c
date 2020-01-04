@@ -189,7 +189,6 @@ static void _nk_fiber_exit(nk_fiber_t *f)
   // DEBUG: Prints out the exiting fiber's wait queue size
   FIBER_DEBUG("_nk_fiber_exit() : queue size is %d\n", f->num_wait);
   
->>>>>>> d0abd8099cc99f502985e3c35274d8f0fa3946ec
   // On exit, go through each fiber in wait queue
   nk_fiber_t *temp;
   struct list_head *waitq = &(f->wait_queue); 
