@@ -313,14 +313,14 @@ ENTRY(_nk_fiber_fp_save)
     andq $-1024, %r15
     // Zeroing out 64 bytes starting at 512th byte of XSAVE area
     // This is a requirement for XSAVE and XRSTOR memory locations 
-    movq $0, 512(%rsp)
-    movq $0, 520(%rsp)
-    movq $0, 528(%rsp)
-    movq $0, 536(%rsp)
-    movq $0, 544(%rsp)
-    movq $0, 552(%rsp)
-    movq $0, 560(%rsp)
-    movq $0, 568(%rsp)  
+    movq $0, 512(%r15)
+    movq $0, 520(%r15)
+    movq $0, 528(%r15)
+    movq $0, 536(%r15)
+    movq $0, 544(%r15)
+    movq $0, 552(%r15)
+    movq $0, 560(%r15)
+    movq $0, 568(%r15)  
     movq $-1, %rax
     movq $-1, %rdx
     XSAVE 0x0(%r15)
