@@ -186,6 +186,10 @@ static void _nk_fiber_exit(nk_fiber_t *f)
   // next will be the fiber we switch to (might be idle fiber)
   nk_fiber_t *next = NULL;
   
+  // DEBUG: Prints out the exiting fiber's wait queue size
+  FIBER_DEBUG("_nk_fiber_exit() : queue size is %d\n", f->num_wait);
+  
+>>>>>>> d0abd8099cc99f502985e3c35274d8f0fa3946ec
   // On exit, go through each fiber in wait queue
   nk_fiber_t *temp;
   struct list_head *waitq = &(f->wait_queue); 
@@ -635,7 +639,7 @@ static void __nk_fiber_idle(void *in, void **out)
       //FIBER_DEBUG("nk_fiber_idle() : fiber thread going to sleep\n");
       nk_sleep(NAUT_CONFIG_FIBER_THREAD_SLEEP_TIME);
       //FIBER_DEBUG("nk_fiber-idle() : fiber thread waking up\n");
-    }
+   }
     #endif
     
     // If we have fiber thread wait enabled

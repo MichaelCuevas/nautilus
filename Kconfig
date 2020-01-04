@@ -586,8 +586,32 @@ config VIRTUAL_CONSOLE_SERIAL_MIRROR_ALL
         help
           This option will enable fiber test commands in the shell.
 
-  endmenu 
+  endmenu
 
+  menu "Compiler-based Timing"
+
+    config COMPILER_TIMING
+        bool "Enable compiler-based timing and time hooks"
+        default true
+	    help
+	      Code transformation injects callbacks/or inlined code
+	      throughout kernel such that the injected code runs
+	      periodically along all codepaths.   A runtime interface
+	      allows the user to hook into these timing events.
+	      No interrupts are involved.
+
+    config COMPILER_TIMING_PERIOD_CYCLES
+       depends on COMPILER_TIMING
+       int "Base period, in cycles"
+       default 10000
+       help 
+          This is target dynamic period between injected callbacks.
+	  This is in cycles, since the compiler transform cannot know
+	  the clock rate of the machine.
+	  At run-time, the interface exposed to the user provides
+	  units of nanoseconds.
+  endmenu
+  
 config REAL_MODE_INTERFACE
    bool "Enable the Long->Real interface"
    default n
@@ -751,7 +775,6 @@ menu "Garbage Collection Options"
   endmenu
 
     menu "FPU Options"
-
     config XSAVE_SUPPORT
       bool "Allow saving of FPRs with XSAVE instructions"
       default true
@@ -1064,7 +1087,17 @@ config DEBUG_GROUP
       help
         Turn on debug prints for group scheduling
 
-    config DEBUG_TIMERS
+    config DEBUG_COMPILER_TIMING
+      bool "Debug Compiler-based Timing"
+      depends on DEBUG_PRINTS && COMPILER_TIMING
+      default n
+      help
+        Turn on debug prints for compiler-based timing and time hooks
+        Note that turning on debugging output may be dangerous
+        since the code can run in almost all contexts (e.g., interrupt
+	context, preemption enabled, etc)
+
+config DEBUG_TIMERS
       bool "Debug Timers"
       depends on DEBUG_PRINTS
       default n

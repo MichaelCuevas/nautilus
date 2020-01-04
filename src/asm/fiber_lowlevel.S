@@ -176,8 +176,7 @@ ENTRY(nk_fiber_yield)
     movq $-1, %rax
     movq $-1, %rdx
 
-
-    /* place new stack ptr into 2nd argument register */
+   /* place new stack ptr into 2nd argument register */
     movq %rsp, %rsi
 
     /* Save FPRs onto stack with xsave */
@@ -234,7 +233,6 @@ ENTRY(nk_fiber_yield_to)
     movq %rsp, %rcx
 
     #if NAUT_CONFIG_FIBER_FSAVE
-
     /* align stack to 64 bytes */
     subq $0x1000, %rsp
     andq $-1024, %rsp

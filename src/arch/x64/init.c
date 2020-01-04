@@ -67,6 +67,10 @@
 #include <nautilus/cmdline.h>
 #include <test/test.h>
 
+#ifdef NAUT_CONFIG_COMPILER_TIMING
+#include <nautilus/timehook.h>
+#endif
+
 #ifdef NAUT_CONFIG_ENABLE_REMOTE_DEBUGGING 
 #include <nautilus/gdb-stub.h>
 #endif
@@ -367,6 +371,10 @@ init (unsigned long mbd,
 
     /* from this point on, we can use percpu macros (even if the APs aren't up) */
 
+#ifdef NAUT_CONFIG_COMPILER_TIMING
+    nk_time_hook_init();
+#endif
+
     sysinfo_init(&(naut->sys));
 
     ioapic_init(&(naut->sys));
@@ -447,6 +455,12 @@ init (unsigned long mbd,
     serial_init();
 
     nk_sched_start();
+    
+#ifdef NAUT_CONFIG_FIBER_ENABLE
+    nk_fiber_init();
+    nk_fiber_startup();
+#endif
+
     
 #ifdef NAUT_CONFIG_FIBER_ENABLE
     nk_fiber_init();

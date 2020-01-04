@@ -31,7 +31,10 @@
 #include <nautilus/scheduler.h>
 #include <nautilus/shell.h>
 #include <nautilus/vc.h>
+<<<<<<< HEAD
 #include <nautilus/barrier.h>
+=======
+>>>>>>> d0abd8099cc99f502985e3c35274d8f0fa3946ec
 
 #define DO_PRINT       0
 
@@ -45,12 +48,15 @@ struct nk_virtual_console *vc;
 nk_fiber_t *first_l;
 nk_fiber_t *second_l;
 
+<<<<<<< HEAD
 typedef struct fib_bar_inp {
    nk_counting_barrier_t *f_bar;
    int n;
 } f_input;
 
 
+=======
+>>>>>>> d0abd8099cc99f502985e3c35274d8f0fa3946ec
 /******************* Test Routines *******************/
 
 void fiber_inner(void *i, void **o)
@@ -413,6 +419,7 @@ void new_yield_2(void *i, void **o)
   nk_vc_printf("new_yield_2 finished.\n");
 }
 
+<<<<<<< HEAD
 void fiber_bar(void *i, void **o)
 {
   f_input *inp = (f_input*)i;
@@ -422,6 +429,8 @@ void fiber_bar(void *i, void **o)
   int k = my_cpu_id(); 
   nk_vc_printf("test_fiber_barriers() : Fiber %d made it past the barrier on cpu %d\n", n, k);
 }
+=======
+>>>>>>> d0abd8099cc99f502985e3c35274d8f0fa3946ec
 
 /******************* Test Wrappers *******************/
 
