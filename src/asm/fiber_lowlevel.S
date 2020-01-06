@@ -250,15 +250,15 @@ ENTRY(nk_fiber_yield_to)
     movq $0, 560(%rsp)
     movq $0, 568(%rsp)  
 
-    /* place new stack ptr into 3rd argument register */
-    movq %rsp, %rdx
-
     /* Move -1 into rax and rdx so all FPRs are saved */
     movq $-1, %rax
     movq $-1, %rdx
 
     /* Save FPRs onto stack with xsave */
     XSAVE 0x0(%rsp)
+    
+    /* place new stack ptr into 3rd argument register */
+    movq %rsp, %rdx
 
     #endif
 
