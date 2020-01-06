@@ -88,7 +88,7 @@ struct nk_time_hook {
 struct nk_time_hook_state {
     spinlock_t      lock;
     enum { INACTIVE=0,                     // before initialization
-	   READY=1,                        // active, not currently in a callback
+	   READY_STATE=1,                        // active, not currently in a callback
 	   INPROGRESS=2} state;            // active, currently in a callback
     uint64_t        last_start_cycles;     // when we last were invoked by the compiler
     int             count;                 // how hooks we have
@@ -349,7 +349,7 @@ void nk_time_hook_fire()
 	return;
     }
 
-    if (s->state!=READY) {
+    if (s->state!=READY_STATE) {
 	DEBUG("short circuiting fire because we are in state %d\n",s->state);
 	LOCAL_UNLOCK(s);
     }
@@ -383,7 +383,7 @@ void nk_time_hook_fire()
     // note that a hook could context switch away from us, so we need to do
     // handle cleanup *before* we execute any hooks
     
-    s->state = READY;
+    s->state = READY_STATE;
     LOCAL_UNLOCK(s);
 
     // now we actually fire the hooks.   Note that the execution of one batch of hooks
