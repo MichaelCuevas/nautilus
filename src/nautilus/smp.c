@@ -40,6 +40,10 @@
 #include <dev/ioapic.h>
 #include <dev/apic.h>
 
+#ifdef NAUT_CONFIG_COMPILER_TIMING
+#include <nautilus/timehook.h>
+#endif
+
 #ifdef NAUT_CONFIG_FIBER_ENABLE
 #include <nautilus/fiber.h>
 #endif
@@ -342,6 +346,10 @@ smp_ap_setup (struct cpu * core)
         return -1;
     }
 
+#ifdef NAUT_CONFIG_COMPILER_TIMING
+    nk_time_hook_init_ap();
+#endif
+    
 #ifdef NAUT_CONFIG_FIBER_ENABLE
     if (nk_fiber_init_ap() != 0) {
         ERROR_PRINT("Could not setup fiber thread for core %u\n", core->id);

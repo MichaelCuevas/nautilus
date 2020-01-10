@@ -89,6 +89,10 @@ struct cpu {
     struct nk_fiber_percpu_state *f_state; /* Fiber state for each CPU */
     #endif
 
+    #if NAUT_CONFIG_COMPILER_TIMING
+    struct nk_time_hook_state    *timehook_state; /* Per-cpu time-hooks */
+    #endif
+
     cpu_id_t id;
     uint32_t lapic_id;   
     uint8_t enabled;
