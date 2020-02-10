@@ -23,6 +23,7 @@
 #include <nautilus/nautilus.h>
 #include <nautilus/blkdev.h>
 #include <dev/ramdisk.h>
+#include <nautilus/partition.h>
 
 #ifndef NAUT_CONFIG_DEBUG_RAMDISK
 #undef DEBUG_PRINT
@@ -152,7 +153,7 @@ static int discover_ramdisks()
 
     INFO("Added embedded image as ramdisk0, blocksize=%lu, numblocks=%lu, len=%lu\n",
 	 s->block_size,s->num_blocks, s->len);
-
+   
 #endif
     return 0;
 }
