@@ -72,4 +72,6 @@ obj-$(NAUT_CONFIG_CACHEPART) +=	cachepart.o
 
 obj-$(NAUT_CONFIG_FIBER_ENABLE) += fiber.o
 
+obj-$(NAUT_CONFIG_PARTITION_SUPPORT) += partition.o
+
 obj-$(NAUT_CONFIG_ASPACES) +=  aspace.o 
