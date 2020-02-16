@@ -44,24 +44,6 @@ extern "C" {
  *
  */
 
-/* Based on osdev description of partition table entry
-typedef struct nk_partition_table_entry {
-    union {
-        uint16_t val;
-        struct {
-            uint8_t status; // Boot flag, 0x80 = bootable, 0x0 = no, 0x01-0x79 = inval
-            uint8_t chs_start_head; // CHS absolute start addr, starting head location
-            uint16_t chs_start_s_c; // starting sector = first 6 bits, cylinder = next 10 bits
-            uint8_t p_type; // Partition type, magic value
-            uint8_t chs_end_head; // CHS end addr, ending head location
-            uint16_t chd_end_s_c; // CHS end sector = first 6 bits, cylinder = next 10 bits
-            uint32_t first_lba; // LBA of first absolute sector in partition
-            uint32_t num_sectors; // number of sectors in partition
-        } __packed;
-    } __packed;
-} __packed nk_part_entry; 
-*/
-
 // Based on osdev description of partition table entry
 typedef struct nk_partition_table_entry {
     union {
@@ -142,31 +124,6 @@ typedef struct nk_guid_pt_header {
     } __packed;
 } __packed nk_part_gpt_header; 
 
-/*
-typedef struct nk_guid_partition_table_header {
-    union {
-        uint8_t val[512];
-        struct {
-            uint8_t sig     : 8; // GUID header signature (set value, differs between endian type)
-            uint8_t rev     : 4; // GUID header revision (0x00000100 for GPT v1.0-v2.7)
-            uint8_t size    : 4; // header size (little endian, typically 92 bytes)
-            uint8_t crc_h   : 4; // CRC32 (cycle redundancy check) of header (little endian)
-            uint8_t res1    : 4; // reserved, must be 0
-            uint8_t clba    : 8; // current LBA (curr location of header copy)
-            uint8_t blba    : 8; // backup LBA (location of other header copy)
-            uint8_t flba    : 8; // first usable LBA (primary part-table's last LBA + 1)
-            uint8_t llba    : 8; // last usable LBA (secondary PT's first LBA - 1)
-            uint8_t dguid   : 16; // Disk GUID in mixed endian
-            uint8_t slba    : 8; // starting LBA of arr of partition entries (2 in primary copy)
-            uint8_t num_pte : 4; // number of partition table entries in array
-            uint8_t pte_s   : 4; // size of single pte
-            uint8_t crc_pte : 4; // CRC32 of partition entries array (little endian)
-            uint8_t res2    : 420; // Rest of block is reserved, 420 bytes for 512 Byte sectors
-        } __packed;
-    } __packed;
-} __packed nk_part_guid_header; 
-*/
-
 typedef struct nk_gpt_entry_attributes {
     union {
         uint64_t val;
@@ -179,7 +136,6 @@ typedef struct nk_gpt_entry_attributes {
         } __packed;
     } __packed;
 } __packed nk_part_gpte_attrs;
-
 
 typedef struct nk_gpt_entry {
     union {

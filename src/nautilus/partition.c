@@ -39,11 +39,12 @@
 #define PART_PT_SIZE 4
 #define PART_MBR_OFFSET 0
 #define PART_GPTH_OFFSET 1
+#define PART_GPT_MAGIC_NUM 0xEE
+
 // Sectors per track
 #define PART_SPT 63
 // Heads per cylinder
 #define PART_HPC 255 
-#define PART_GPT_MAGIC_NUM 0xEE
 
 #define STATE_LOCK_CONF uint8_t _state_lock_flags
 #define STATE_LOCK(state) _state_lock_flags = spin_lock_irq_save(&state->lock)
@@ -57,7 +58,6 @@ struct partition_state {
     //uint64_t len;
     uint64_t block_size;
     uint64_t num_blocks;
-    // Add Initial Block
     uint32_t ILBA; // First LBA of the partition
     struct nk_block_dev *underlying_blkdev; // Blockdevice this partition was created from
 };
@@ -82,8 +82,6 @@ static int get_characteristics(void *state, struct nk_block_dev_characteristics 
     return 0;
 }
 
-// is block num and count within range of partition?
-// translate (blocknum+starting point of part, then pass that info to underlying device)
 static int read_blocks(void *state, uint64_t blocknum, uint64_t count, uint8_t *dest,void (*callback)(nk_block_dev_status_t, void *), void *context)
 {
     STATE_LOCK_CONF;
@@ -391,6 +389,8 @@ void nk_partition_deinit()
 }
 
 
+// Start of code to convert CHS to LBA
+// Probably not needed
 void convert_to_lba(){
     /*
         // starting CHS to starting LBA conversion
