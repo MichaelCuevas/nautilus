@@ -195,12 +195,17 @@ int nk_ebr_enumeration(struct nk_block_dev *blockdev,
                         struct nk_block_dev_characteristics blk_dev_chars,
                         int extended_entry)
 {
-    int i;
-    for (i = 0; i < PART_PT_SIZE; i++) {
+    // Work through all the extended partitions until we hit the end
+    uint64_t start_sec = MBR->partitions[extended_entry].first_lba;
+    uint64_t ext_size = MBR->partitions[extended_entry].num_sectors;
+    uint64_t next_ebr = MBR->partitions[extended_entry].first_lba;
+    uint64_t mbr_blks = (sizeof(*MBR))/(blk_dev_chars.block_size);
+    int i = 4;
+    while (next_ebr) {
+        nk_block_dev_read(blockdev, next_ebr, mbr_blks, MBR, NK_DEV_REQ_BLOCKING, 0, 0);
         struct partition_state *ps = malloc(sizeof(struct partition_state));
             
         if (!ps) {
-            free(MBR); 
             ERROR("Cannot allocate data structure for partition\n");
             return -1;
         }
@@ -209,26 +214,28 @@ int nk_ebr_enumeration(struct nk_block_dev *blockdev,
         
         // Initialize the partition state lock and pte    
         spinlock_init(&ps->lock);
-        ps->pte.mpte = MBR->partitions[i];
-        ps->ptype = PART_MBR_PTE;
-
-        // Check if curr partition table entry has at least 1 sector and less than max sectors
-        if (ps->pte.mpte.num_sectors == 0  || ps->pte.mpte.num_sectors > blk_dev_chars.num_blocks) {
-            free(ps);
-            continue; 
-        }
+        ps->pte.epte.entry1 = MBR->partitions[0];
+        ps->pte.epte.entry2 = MBR->partitions[1];
+        ps->ptype = PART_EBR_PTE;
 
         // Fill out rest of partition state
         ps->block_size = blk_dev_chars.block_size;
-        ps->num_blocks = ps->pte.mpte.num_sectors;
-        ps->ILBA = ps->pte.mpte.first_lba;   
+        ps->num_blocks = ps->pte.epte.entry1.num_sectors;
+        ps->ILBA = ps->pte.epte.entry1.first_lba + next_ebr;
         ps->underlying_blkdev = blockdev;
-        
+
+        // Calculate where next block will be
+        if (ps->pte.epte.entry2.num_sectors == 0) {
+            // Last MBR in the table, don't have to worry about updating
+            next_ebr = 0;
+        } else {
+            next_ebr = start_sec + ps->pte.epte.entry2.first_lba;
+        }
+
         // Get new partition name
         char **new_name = 0;
         if (nk_generate_partition_name(i+1, blockdev->dev.name, new_name)) {
             free(ps);
-            free(MBR);
             return -1; 
         }
 
@@ -238,14 +245,13 @@ int nk_ebr_enumeration(struct nk_block_dev *blockdev,
         
         if (!ps->blkdev) {
             ERROR("Failed to register partition\n");
-            free(MBR); 
             free(ps);
             return -1;
         } 
 
         INFO("Added patition as %s, blocksize=%lu, ILBA=%lu, numblocks=%lu\n", ps->blkdev->dev.name, ps->block_size, ps->ILBA, ps->num_blocks);
+        i++;
     }
-    free(MBR);
     return 0;
 } 
 
@@ -256,7 +262,6 @@ int nk_mbr_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
         struct partition_state *ps = malloc(sizeof(struct partition_state));
             
         if (!ps) {
-            free(MBR); 
             ERROR("Cannot allocate data structure for partition\n");
             return -1;
         }
@@ -284,7 +289,6 @@ int nk_mbr_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
         char **new_name = 0;
         if (nk_generate_partition_name(i+1, blockdev->dev.name, new_name)) {
             free(ps);
-            free(MBR);
             return -1; 
         }
 
@@ -294,14 +298,12 @@ int nk_mbr_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
         
         if (!ps->blkdev) {
             ERROR("Failed to register partition\n");
-            free(MBR); 
             free(ps);
             return -1;
         } 
 
         INFO("Added patition as %s, blocksize=%lu, ILBA=%lu, numblocks=%lu\n", ps->blkdev->dev.name, ps->block_size, ps->ILBA, ps->num_blocks);
     }
-    free(MBR);
     return 0;
 } 
 
@@ -364,7 +366,6 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
         // allocate partition state
         struct partition_state *ps = malloc(sizeof(struct partition_state));
         if (!ps) {
-            free(MBR);
             free(gpte_arr); 
             ERROR("Cannot allocate data structure for partition\n");
             return -1;
@@ -387,7 +388,6 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
         if (nk_generate_partition_name(partition_num+1, blockdev->dev.name, new_name)) {
             free(ps);
             free(gpte_arr);
-            free(MBR);
             return -1; 
         }
 
@@ -397,7 +397,6 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
 
         if (!ps->blkdev) {
             ERROR("Failed to register partition\n");
-            free(MBR);
             free(gpte_arr);
             free(ps);
             return -1;
@@ -405,7 +404,6 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
 
         INFO("Added patition as %s, blocksize=%lu, ILBA=%lu, numblocks=%lu\n", ps->blkdev->dev.name, ps->block_size, ps->ILBA, ps->num_blocks);    
     }
-    free(MBR);
     free(gpte_arr);
     return 0;
 }
@@ -432,30 +430,44 @@ int nk_enumerate_partitions(struct nk_block_dev *blockdev)
     // If not, something went wrong
     if (MBR->boot_sig[0] != 0x55 && MBR->boot_sig[1] != 0xaa) {
         ERROR("Invalid MBR Boot Signature!\n");
-        free(MBR);
         return -1;
     }
 
+    int rc = 0;
     // First partition type of 0xEE signals a protective MBR and that a GPT is being used
     // First or second partition type of 0x0F signals that an EBR is being used (with LBA)
     // Else, treat MBR as a normal MBR and proceed with regular mbr enumeration
     if (MBR->partitions[0].p_type == PART_GPT_MAGIC_NUM) {
         DEBUG("The first partition type is: %lu\n", MBR->partitions[0].p_type);
         DEBUG("Starting GPT Enumeration\n");
-        return nk_gpt_enumeration(blockdev, MBR, blk_dev_chars); 
+        rc = nk_gpt_enumeration(blockdev, MBR, blk_dev_chars); 
     } else if (MBR->partitions[0].p_type == PART_EBR_MAGIC_NUM) {
         DEBUG("The first partition type is: %lu\n", MBR->partitions[0].p_type);
-        DEBUG("Starting EBR Enumeration\n");
-        return nk_ebr_enumeration(blockdev, MBR, blk_dev_chars, 0);
+        DEBUG("Starting MBR Enumeration\n");
+        rc = nk_mbr_enumeration(blockdev, MBR, blk_dev_chars);
+        if (rc) {
+            free(MBR);
+            return rc;
+        }
+        DEBUG("MBR Enumeration finished. Starting EBR Enumeration\n");
+        rc =  nk_ebr_enumeration(blockdev, MBR, blk_dev_chars, 0);
     } else if (MBR->partitions[1].p_type == PART_EBR_MAGIC_NUM) {
         DEBUG("The second partition type is: %lu\n", MBR->partitions[1].p_type);
-        DEBUG("Starting EBR Enumeration\n");
-        return nk_ebr_enumeration(blockdev, MBR, blk_dev_chars, 1);
+        DEBUG("Starting MBR Enumeration\n");
+        int rc = nk_mbr_enumeration(blockdev, MBR, blk_dev_chars);
+        if (rc) {
+            free(MBR);
+            return rc;
+        }
+        DEBUG("MBR Enumeration finished. Starting EBR Enumeration\n");
+        rc = nk_ebr_enumeration(blockdev, MBR, blk_dev_chars, 1);
     } else {
         DEBUG("The first partition type is: %lu\n", MBR->partitions[0].p_type);
         DEBUG("Starting normal MBR Enumeration\n");
-        return nk_mbr_enumeration(blockdev, MBR, blk_dev_chars);
+        rc = nk_mbr_enumeration(blockdev, MBR, blk_dev_chars);
     }
+    free(MBR);
+    return rc;
 }
 
 

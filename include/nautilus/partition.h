@@ -182,7 +182,15 @@ typedef struct nk_part_gpt_entry_block {
  *
  */
 
-typedef nk_part_mpte nk_part_epte;
+typedef struct nk_part_extended_mpte {
+    union {
+        uint32_t val;
+        struct {
+            nk_part_mpte entry1;
+            nk_part_mpte entry2;
+        } __packed;
+    } __packed; 
+} __packed nk_part_epte;
 
 
 // Generic Partition Entry
