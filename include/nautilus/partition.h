@@ -34,8 +34,18 @@ extern "C" {
 
 #include <nautilus/blkdev.h>
 
-// MBR Structures
+#define PART_MBR_PTE 0
+#define PART_GPT_PTE 1
+#define PART_EBR_PTE 2
 
+typedef enum nk_part_partition_entry_type {
+    MBR_PTE = 0,
+    GPT_PTE = 1,
+    EBR_PTE = 2
+} nk_pte_type;
+
+
+// MBR Structures
 /*
  *
  * NOTE: - ALL PARTITION TABLE AND MBR ENTRIES ARE LITTLE ENDIAN
@@ -45,7 +55,7 @@ extern "C" {
  */
 
 // Based on osdev description of partition table entry
-typedef struct nk_partition_table_entry {
+typedef struct nk_part_mbr_partition_table_entry {
     union {
         uint16_t val;
         struct {
@@ -61,23 +71,23 @@ typedef struct nk_partition_table_entry {
             uint32_t num_sectors   : 32; // number of sectors in partition
         } __packed;
     } __packed;
-} __packed nk_part_entry; 
+} __packed nk_part_mpte; 
 
 
 // Based on MBR (master boot record) osdev entry
-typedef struct nk_classical_mbr {
+typedef struct nk_part_classical_mbr {
     union {
         uint8_t val[512];
         struct {
             uint8_t boot_code1[446]; // Bootstrap code
-            nk_part_entry partitions[4]; // partition table entries, 16 bytes each
+            nk_part_mpte partitions[4]; // partition table entries, 16 bytes each
             uint8_t boot_sig[2]; // boot signature, first byte = 0x55, second byte = 0xaa
         } __packed;
     } __packed;
-} __packed nk_classic_mbr_t;
+} __packed nk_part_classic_mbr_t;
 
 // Based on MBR (master boot record) wiki entry
-typedef struct nk_modern_standard_mbr {
+typedef struct nk_part_modern_standard_mbr {
     union {
         uint8_t val[512];
         struct {
@@ -86,11 +96,12 @@ typedef struct nk_modern_standard_mbr {
             uint8_t boot_code2[216]; // Bootstrap code part 2
             uint8_t disk_sig[4]; // Disk signature, 32-bits
             uint8_t is_copyable[2]; // 0x0000 = not copy protected, 0x5a5a = copy protected
-            nk_part_entry partitions[4]; // partition table entries, 16 bytes each
+            nk_part_mpte partitions[4]; // partition table entries, 16 bytes each
             uint8_t boot_sig[2]; // boot signature, first byte = 0x55, second byte = 0xaa
         } __packed;
     } __packed;
-} __packed nk_modern_mbr_t;
+} __packed nk_part_modern_mbr_t;
+
 
 // GUID Partition Table Structures
 /*
@@ -101,7 +112,7 @@ typedef struct nk_modern_standard_mbr {
  *
  */
 
-typedef struct nk_guid_pt_header {
+typedef struct nk_part_guid_pt_header {
     union {
         uint8_t val[512];
         struct {
@@ -124,7 +135,7 @@ typedef struct nk_guid_pt_header {
     } __packed;
 } __packed nk_part_gpt_header; 
 
-typedef struct nk_gpt_entry_attributes {
+typedef struct nk_part_gpt_entry_attributes {
     union {
         uint64_t val;
         struct {
@@ -137,7 +148,7 @@ typedef struct nk_gpt_entry_attributes {
     } __packed;
 } __packed nk_part_gpte_attrs;
 
-typedef struct nk_gpt_entry {
+typedef struct nk_part_gpt_entry {
     union {
         uint8_t val[128];
         struct {
@@ -158,6 +169,39 @@ typedef struct nk_part_gpt_entry_block {
     } __packed; 
 } __packed nk_part_gpte_block;
 
+
+// Extended Partition Table Structures
+/*
+ *
+ * NOTE: - Extended partition tables use the same structures as MBR partition tables
+ *       - However, we should differentiate between them because their entries
+ *          will differ slightly.
+ *              - All EBR's only have 2 table entries filled out (instead of all 4)
+ *       - Extended partition's offsets are also calculated differently and therefore
+ *          should be contained in different structures
+ *
+ */
+
+typedef nk_part_mpte nk_part_epte;
+
+
+// Generic Partition Entry
+/*
+ *
+ * NOTE: - Each partition state needs a single partition table entry associated with it
+ *       - Instead of adding 3 fields to the partition state struct, we add a generic partition entry
+ *       - We also have an enum that signals the partition entry type
+ *
+ */
+
+typedef union nk_generic_partition_entry {
+        nk_part_mpte mpte;
+        nk_part_gpte gpte;
+        nk_part_epte epte;
+} __packed nk_part_entry;
+
+
+// Partition Functions
 
 int  nk_partition_init(struct naut_info *naut);
 // add additional arg that hands back details of partition

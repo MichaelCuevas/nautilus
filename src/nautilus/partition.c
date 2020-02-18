@@ -39,12 +39,14 @@
 #define PART_PT_SIZE 4
 #define PART_MBR_OFFSET 0
 #define PART_GPTH_OFFSET 1
-#define PART_GPT_MAGIC_NUM 0xEE
-
 // Sectors per track
 #define PART_SPT 63
 // Heads per cylinder
 #define PART_HPC 255 
+#define PART_GPT_MAGIC_NUM 0xEE
+#define PART_EBR_MAGIC_NUM 0x0F
+
+#define CEIL_DIV(x,y)  (((x)/(y)) + !!((x)%(y)))
 
 #define STATE_LOCK_CONF uint8_t _state_lock_flags
 #define STATE_LOCK(state) _state_lock_flags = spin_lock_irq_save(&state->lock)
@@ -54,10 +56,12 @@
 struct partition_state {
     struct nk_block_dev *blkdev;
     spinlock_t lock;
+    nk_pte_type ptype;
     nk_part_entry pte;
     //uint64_t len;
     uint64_t block_size;
     uint64_t num_blocks;
+    // Add Initial Block
     uint32_t ILBA; // First LBA of the partition
     struct nk_block_dev *underlying_blkdev; // Blockdevice this partition was created from
 };
@@ -82,6 +86,8 @@ static int get_characteristics(void *state, struct nk_block_dev_characteristics 
     return 0;
 }
 
+// is block num and count within range of partition?
+// translate (blocknum+starting point of part, then pass that info to underlying device)
 static int read_blocks(void *state, uint64_t blocknum, uint64_t count, uint8_t *dest,void (*callback)(nk_block_dev_status_t, void *), void *context)
 {
     STATE_LOCK_CONF;
@@ -103,14 +109,11 @@ static int read_blocks(void *state, uint64_t blocknum, uint64_t count, uint8_t *
         ERROR("Illegal access past end of block device\n");
         return -1;
     } else {
-        read_blocks(s->underlying_blkdev->dev.state, blocknum+s->ILBA, count, dest, callback, context);
-	    //memcpy(dest,s->data+blocknum*s->block_size,s->block_size*count);
+        nk_block_dev_read(s->underlying_blkdev, blocknum+s->ILBA, count, dest, NK_DEV_REQ_BLOCKING, callback, context);
 	    STATE_UNLOCK(s);
-	    /*nk_dump_mem(dest,s->block_size*count);
-	    if (callback) {
+        if (callback) {
 	        callback(NK_BLOCK_DEV_STATUS_SUCCESS,context);
 	    }
-        */
 	    return 0;
     }
 }
@@ -136,14 +139,11 @@ static int write_blocks(void *state, uint64_t blocknum, uint64_t count, uint8_t 
 	    ERROR("Illegal access past end of disk\n");
 	    return -1;
     } else {
-	    //memcpy(s->data+blocknum*s->block_size,src,s->block_size*count);
-	    write_blocks(s->underlying_blkdev->dev.state, blocknum+s->ILBA, count, src, callback, context);
+	    nk_block_dev_write(s->underlying_blkdev, blocknum+s->ILBA, count, src, NK_DEV_REQ_BLOCKING, callback, context);
 	    STATE_UNLOCK(s);
-	    /*
         if (callback) { 
 	        callback(NK_BLOCK_DEV_STATUS_SUCCESS,context);
 	    }
-        */
 	    return 0;
     }
 }
@@ -161,6 +161,7 @@ int nk_generate_partition_name(int partition_num, char *blk_name, char **new_nam
 {
     // Create buffer char arr for int to str conversion
     char buffer[DEV_NAME_LEN];
+    buffer[0] = 'p';
 
     int num_digits = 0;
     int temp_num = partition_num;
@@ -171,7 +172,7 @@ int nk_generate_partition_name(int partition_num, char *blk_name, char **new_nam
               
 
     // convert i (loop control var) to str
-    itoa(partition_num, buffer, num_digits);
+    itoa(partition_num, buffer+1, num_digits-1);
     const char *p_num_str = buffer;
 
     // new char* to hold new device name 
@@ -189,7 +190,10 @@ int nk_generate_partition_name(int partition_num, char *blk_name, char **new_nam
     return 0;
 }
 
-int nk_mbr_enumeration(struct nk_block_dev *blockdev, nk_modern_mbr_t *MBR, struct nk_block_dev_characteristics blk_dev_chars)
+int nk_ebr_enumeration(struct nk_block_dev *blockdev, 
+                        nk_part_modern_mbr_t *MBR,
+                        struct nk_block_dev_characteristics blk_dev_chars,
+                        int extended_entry)
 {
     int i;
     for (i = 0; i < PART_PT_SIZE; i++) {
@@ -205,22 +209,23 @@ int nk_mbr_enumeration(struct nk_block_dev *blockdev, nk_modern_mbr_t *MBR, stru
         
         // Initialize the partition state lock and pte    
         spinlock_init(&ps->lock);
-        ps->pte = MBR->partitions[i];
+        ps->pte.mpte = MBR->partitions[i];
+        ps->ptype = PART_MBR_PTE;
 
         // Check if curr partition table entry has at least 1 sector and less than max sectors
-        if (ps->pte.num_sectors == 0  || ps->pte.num_sectors > blk_dev_chars.num_blocks) {
+        if (ps->pte.mpte.num_sectors == 0  || ps->pte.mpte.num_sectors > blk_dev_chars.num_blocks) {
             free(ps);
             continue; 
         }
 
         // Fill out rest of partition state
         ps->block_size = blk_dev_chars.block_size;
-        ps->num_blocks = ps->pte.num_sectors;
-        ps->ILBA = ps->pte.first_lba;   
+        ps->num_blocks = ps->pte.mpte.num_sectors;
+        ps->ILBA = ps->pte.mpte.first_lba;   
         ps->underlying_blkdev = blockdev;
         
         // Get new partition name
-        char **new_name;
+        char **new_name = 0;
         if (nk_generate_partition_name(i+1, blockdev->dev.name, new_name)) {
             free(ps);
             free(MBR);
@@ -244,7 +249,63 @@ int nk_mbr_enumeration(struct nk_block_dev *blockdev, nk_modern_mbr_t *MBR, stru
     return 0;
 } 
 
-int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_modern_mbr_t *MBR, struct nk_block_dev_characteristics blk_dev_chars)
+int nk_mbr_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR, struct nk_block_dev_characteristics blk_dev_chars)
+{
+    int i;
+    for (i = 0; i < PART_PT_SIZE; i++) {
+        struct partition_state *ps = malloc(sizeof(struct partition_state));
+            
+        if (!ps) {
+            free(MBR); 
+            ERROR("Cannot allocate data structure for partition\n");
+            return -1;
+        }
+         
+        memset(ps,0,sizeof(*ps));
+        
+        // Initialize the partition state lock and pte    
+        spinlock_init(&ps->lock);
+        ps->pte.mpte = MBR->partitions[i];
+        ps->ptype = PART_MBR_PTE;
+
+        // Check if curr partition table entry has at least 1 sector and less than max sectors
+        if (ps->pte.mpte.num_sectors == 0  || ps->pte.mpte.num_sectors > blk_dev_chars.num_blocks) {
+            free(ps);
+            continue; 
+        }
+
+        // Fill out rest of partition state
+        ps->block_size = blk_dev_chars.block_size;
+        ps->num_blocks = ps->pte.mpte.num_sectors;
+        ps->ILBA = ps->pte.mpte.first_lba;   
+        ps->underlying_blkdev = blockdev;
+        
+        // Get new partition name
+        char **new_name = 0;
+        if (nk_generate_partition_name(i+1, blockdev->dev.name, new_name)) {
+            free(ps);
+            free(MBR);
+            return -1; 
+        }
+
+        // Register new partition
+        ps->blkdev = nk_block_dev_register(*new_name, 0, &inter, ps);
+        free(*new_name);
+        
+        if (!ps->blkdev) {
+            ERROR("Failed to register partition\n");
+            free(MBR); 
+            free(ps);
+            return -1;
+        } 
+
+        INFO("Added patition as %s, blocksize=%lu, ILBA=%lu, numblocks=%lu\n", ps->blkdev->dev.name, ps->block_size, ps->ILBA, ps->num_blocks);
+    }
+    free(MBR);
+    return 0;
+} 
+
+int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR, struct nk_block_dev_characteristics blk_dev_chars)
 { 
     // Create GPT Header struct to hold GPT header info
     nk_part_gpt_header *GPTH = malloc(sizeof(*GPTH));
@@ -257,7 +318,7 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_modern_mbr_t *MBR, stru
     uint64_t gpth_blks = (sizeof(*GPTH))/(blk_dev_chars.block_size);
 
     // Read GPT Header
-    nk_block_dev_read(blockdev, PART_GPTH_OFFSET, gpth_blks, GPTH, NK_DEV_REQ_NONBLOCKING, 0, 0);
+    nk_block_dev_read(blockdev, PART_GPTH_OFFSET, gpth_blks, GPTH, NK_DEV_REQ_BLOCKING, 0, 0);
 
     uint32_t entry_size = GPTH->pte_size;
     uint32_t num_entries = GPTH->num_ptes;
@@ -269,8 +330,7 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_modern_mbr_t *MBR, stru
     DEBUG("GPTE Block Struct Size: %lu \n", sizeof(nk_part_gpte_block));
 
     uint64_t num_bytes = entry_size * num_entries;
-    // TODO MAC: Not correct, need to use ceiling function
-    uint64_t blocks_to_read = (num_bytes/(blk_dev_chars.block_size));
+    uint64_t blocks_to_read = CEIL_DIV(num_bytes,(blk_dev_chars.block_size));
     nk_part_gpte *gpte_arr = malloc(sizeof(*gpte_arr)*num_entries);
 
     // Print number of blocks we're reading
@@ -278,7 +338,7 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_modern_mbr_t *MBR, stru
     DEBUG("Total size of gpte_arr = %lu\n", sizeof(gpte_arr));
     
     // Read enough blocks to cover all of GPT
-    nk_block_dev_read(blockdev, SLBA, blocks_to_read, gpte_arr, NK_DEV_REQ_NONBLOCKING, 0, 0);
+    nk_block_dev_read(blockdev, SLBA, blocks_to_read, gpte_arr, NK_DEV_REQ_BLOCKING, 0, 0);
 
     // ptei = partition table entry index (within block)
     int ptei;
@@ -315,13 +375,15 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_modern_mbr_t *MBR, stru
         spinlock_init(&ps->lock);
 
         // Fill out rest of partition state
+        ps->pte.gpte = temp_entry;
+        ps->ptype = PART_GPT_PTE;
         ps->block_size = blk_dev_chars.block_size;
         ps->num_blocks = num_sectors;
-        ps->ILBA = temp_entry.flba;   
+        ps->ILBA = ps->pte.gpte.flba;   
         ps->underlying_blkdev = blockdev;
 
         int partition_num = ptei;
-        char **new_name;
+        char **new_name = 0;
         if (nk_generate_partition_name(partition_num+1, blockdev->dev.name, new_name)) {
             free(ps);
             free(gpte_arr);
@@ -351,7 +413,7 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_modern_mbr_t *MBR, stru
 int nk_enumerate_partitions(struct nk_block_dev *blockdev)
 {
     // Create MBR struct to hold MBR info
-    nk_modern_mbr_t *MBR = malloc(sizeof(*MBR));
+    nk_part_modern_mbr_t *MBR = malloc(sizeof(*MBR));
     if (!MBR) {
         ERROR("Cannot allocate data structure for MBR\n");
         return -1;
@@ -364,14 +426,34 @@ int nk_enumerate_partitions(struct nk_block_dev *blockdev)
     uint64_t mbr_blks = (sizeof(*MBR))/(blk_dev_chars.block_size);
 
     // Read MBR
-    nk_block_dev_read(blockdev, PART_MBR_OFFSET, mbr_blks, MBR, NK_DEV_REQ_NONBLOCKING, 0, 0);
+    nk_block_dev_read(blockdev, PART_MBR_OFFSET, mbr_blks, MBR, NK_DEV_REQ_BLOCKING, 0, 0);
 
-    // If the first partition type is 0xEE, GPT is being used instead of MBR
+    // Check to see if "magic" signature is present
+    // If not, something went wrong
+    if (MBR->boot_sig[0] != 0x55 && MBR->boot_sig[1] != 0xaa) {
+        ERROR("Invalid MBR Boot Signature!\n");
+        free(MBR);
+        return -1;
+    }
+
+    // First partition type of 0xEE signals a protective MBR and that a GPT is being used
+    // First or second partition type of 0x0F signals that an EBR is being used (with LBA)
+    // Else, treat MBR as a normal MBR and proceed with regular mbr enumeration
     if (MBR->partitions[0].p_type == PART_GPT_MAGIC_NUM) {
         DEBUG("The first partition type is: %lu\n", MBR->partitions[0].p_type);
+        DEBUG("Starting GPT Enumeration\n");
         return nk_gpt_enumeration(blockdev, MBR, blk_dev_chars); 
+    } else if (MBR->partitions[0].p_type == PART_EBR_MAGIC_NUM) {
+        DEBUG("The first partition type is: %lu\n", MBR->partitions[0].p_type);
+        DEBUG("Starting EBR Enumeration\n");
+        return nk_ebr_enumeration(blockdev, MBR, blk_dev_chars, 0);
+    } else if (MBR->partitions[1].p_type == PART_EBR_MAGIC_NUM) {
+        DEBUG("The second partition type is: %lu\n", MBR->partitions[1].p_type);
+        DEBUG("Starting EBR Enumeration\n");
+        return nk_ebr_enumeration(blockdev, MBR, blk_dev_chars, 1);
     } else {
         DEBUG("The first partition type is: %lu\n", MBR->partitions[0].p_type);
+        DEBUG("Starting normal MBR Enumeration\n");
         return nk_mbr_enumeration(blockdev, MBR, blk_dev_chars);
     }
 }
@@ -389,8 +471,6 @@ void nk_partition_deinit()
 }
 
 
-// Start of code to convert CHS to LBA
-// Probably not needed
 void convert_to_lba(){
     /*
         // starting CHS to starting LBA conversion

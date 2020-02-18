@@ -477,7 +477,6 @@ init (unsigned long mbd,
 #endif
 
 
-// TODO MAC: Add partition to config
 #ifdef NAUT_CONFIG_PARTITION_SUPPORT
     nk_partition_init(naut);
 #endif
@@ -520,13 +519,13 @@ init (unsigned long mbd,
 
 #ifdef NAUT_CONFIG_EXT2_FILESYSTEM_DRIVER
 #ifdef NAUT_CONFIG_RAMDISK_EMBED
-    nk_fs_ext2_attach("ramdisk0","rootfs", 1);
+    //nk_fs_ext2_attach("ramdisk0","rootfs", 1);
 #endif
 #endif
 
 #ifdef NAUT_CONFIG_FAT32_FILESYSTEM_DRIVER
 #ifdef NAUT_CONFIG_RAMDISK_EMBED
-    nk_fs_fat32_attach("ramdisk0","rootfs", 1);
+    //nk_fs_fat32_attach("ramdisk0","rootfs", 1);
 #endif
 #endif
 
