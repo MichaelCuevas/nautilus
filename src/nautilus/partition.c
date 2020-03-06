@@ -39,9 +39,6 @@
 #define PART_PT_SIZE 4
 #define PART_MBR_OFFSET 0
 #define PART_GPTH_OFFSET 1
-// Sectors per track
-#define PART_SPT 63
-// Heads per cylinder
 #define PART_HPC 255 
 #define PART_GPT_MAGIC_NUM 0xEE
 #define PART_EBR_MAGIC_NUM 0x0F
@@ -157,7 +154,7 @@ static struct nk_block_dev_int inter =
     .write_blocks = write_blocks,
 };
 
-int nk_generate_partition_name(int partition_num, char *blk_name, char **new_name)
+static int nk_generate_partition_name(int partition_num, char *blk_name, char **new_name)
 {
     // Create buffer char arr for int to str conversion
     char buffer[DEV_NAME_LEN];
@@ -170,7 +167,6 @@ int nk_generate_partition_name(int partition_num, char *blk_name, char **new_nam
         num_digits++;
     } while (temp_num > 0);
               
-
     // convert i (loop control var) to str
     itoa(partition_num, buffer+1, num_digits-1);
     const char *p_num_str = buffer;
@@ -317,6 +313,7 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
     } 
     memset(GPTH, 0, sizeof(*GPTH));
 
+    // We are assuming it will divide evenly, might not. Add ceiling div
     uint64_t gpth_blks = (sizeof(*GPTH))/(blk_dev_chars.block_size);
 
     // Read GPT Header
@@ -333,7 +330,7 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
 
     uint64_t num_bytes = entry_size * num_entries;
     uint64_t blocks_to_read = CEIL_DIV(num_bytes,(blk_dev_chars.block_size));
-    nk_part_gpte *gpte_arr = malloc(sizeof(*gpte_arr)*num_entries);
+    nk_part_gpte *gpte_arr = malloc(blocks_to_read*(blk_dev_chars.block_size));
 
     // Print number of blocks we're reading
     DEBUG("Reading %lu Bytes which = %lu 512-Byte blocks\n", num_bytes, blocks_to_read);
@@ -346,7 +343,6 @@ int nk_gpt_enumeration(struct nk_block_dev *blockdev, nk_part_modern_mbr_t *MBR,
     int ptei;
     for (ptei = 0; ptei < num_entries; ptei++)
     {
-        // TODO MAC: need to add gpte to partition_state
         nk_part_gpte temp_entry = gpte_arr[ptei];
 
         // Ignore the content of this partition! 
@@ -462,6 +458,7 @@ int nk_enumerate_partitions(struct nk_block_dev *blockdev)
         DEBUG("MBR Enumeration finished. Starting EBR Enumeration\n");
         rc = nk_ebr_enumeration(blockdev, MBR, blk_dev_chars, 1);
     } else {
+        // explain why this is the case
         DEBUG("The first partition type is: %lu\n", MBR->partitions[0].p_type);
         DEBUG("Starting normal MBR Enumeration\n");
         rc = nk_mbr_enumeration(blockdev, MBR, blk_dev_chars);
