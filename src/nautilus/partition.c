@@ -26,6 +26,7 @@
 #include <nautilus/nautilus.h>
 #include <nautilus/blkdev.h>
 #include <nautilus/partition.h>
+#include <nautilus/shell.h>
 
 #ifndef NAUT_CONFIG_DEBUG_PARTITION
 #undef DEBUG_PRINT
@@ -62,13 +63,6 @@ struct partition_state {
     uint32_t ILBA; // First LBA of the partition
     struct nk_block_dev *underlying_blkdev; // Blockdevice this partition was created from
 };
-
-// TODO MAC: Later
-int  nk_partition_init(struct naut_info *naut);
-// add additional arg that hands back details of partition
-int nk_enumerate_partitions(struct nk_block_dev *blkdev); 
-void nk_partition_deinit();
-
 
 
 static int get_characteristics(void *state, struct nk_block_dev_characteristics *c)
@@ -480,20 +474,37 @@ void nk_partition_deinit()
 }
 
 
-void convert_to_lba(){
-    /*
-        // starting CHS to starting LBA conversion
-        // ILBA = (SC x HPC x SH) x SPT + (SS-1)
-        uint8_t SC = ps->pte->chs_start_c;
-        uint8_t SH = ps->pte->chs_start_h;
-        uint8_t SS = ps->pte->chs_start_s;
-        
-        // ending CHS to ending LBA conversion
-        // ELBA = (EC x HPC x EH) x SPT + (ES-1)
-        uint8_t EC = ps->pte->chs_end_c;
-        uint8_t EH = ps->pte->chs_end_h;
-        uint8_t ES = ps->pte->chs_end_s;
-        */
+static int
+handle_part (char * buf, void * priv)
+{
+    char blkdevName[DEV_NAME_LEN];
 
+    memset(blkdevName, 0, DEV_NAME_LEN);
+
+    if (sscanf(buf, "enumparts %s", &blkdevName) != 1) {
+      nk_vc_printf("Don't understand %s\n",buf);
+      return -1;
+    }
+ 
+    struct nk_block_dev *dev = nk_block_dev_find(blkdevName);
+    if (!dev) { 
+	  //ERROR("Cannot find block device %s\n", blkdevName);
+	  nk_vc_printf("Cannot find block device %s\n", blkdevName);
+	  return -1;
+    }
+   
+    if (nk_enumerate_partitions(dev)) {
+      //ERROR("Failed to enumerate partitions for block dev %s\n", blkdevName);
+      nk_vc_printf("Failed to enumerate partitions for block dev %s\n", blkdevName);
+      return -1;
+    }
+    nk_vc_printf("successfully enumerated partitions for block dev %s\n", blkdevName);
+    return 0; 
 }
 
+static struct shell_cmd_impl part_impl = {
+    .cmd      = "enumparts",
+    .help_str = "enumparts [blkdevName]",
+    .handler  = handle_part,
+};
+nk_register_shell_cmd(part_impl);

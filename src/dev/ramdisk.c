@@ -153,11 +153,7 @@ static int discover_ramdisks()
 
     INFO("Added embedded image as ramdisk0, blocksize=%lu, numblocks=%lu, len=%lu\n",
 	 s->block_size,s->num_blocks, s->len);
-    
-    if (nk_enumerate_partitions(s->blkdev)) {
-        ERROR("Failed to enumerate partitions\n");
-        return -1;
-    }
+   
 #endif
     return 0;
 }
