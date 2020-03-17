@@ -1464,7 +1464,7 @@ static void fiber_sc(void *i, void **o)
 {
   struct sys_info * sys = per_cpu_get(system);
   int num_cpus = sys->num_cpus;
-  test_fiber_streamcluster(num_cpus-1, 0, 0, 0, (uint64_t)i);
+  test_fiber_streamcluster(num_cpus, 0, 0, 0, (uint64_t)i);
 }
 
 int test_sc_with_fibers(uint64_t test_size)
@@ -1472,7 +1472,7 @@ int test_sc_with_fibers(uint64_t test_size)
   nk_fiber_t *master;
   extern struct nk_virtual_console *vc; 
   vc = get_cur_thread()->vc;
-  if (nk_fiber_start(fiber_sc, (void *)test_size, 0, 0, F_CURR_CPU, &master) < 0) {
+  if (nk_fiber_start(fiber_sc, (void *)test_size, 0, 0, 0, &master) < 0) {
     nk_vc_printf("test_fibers_counter() : Fiber failed to start\n");
     return -1;
   } 
@@ -1484,7 +1484,7 @@ int test_sc_with_fibers(uint64_t test_size)
 static int handle_sc_fibers (char *buf, void *priv)
 {
   uint64_t test_size;
-  if (sscanf(buf,"fibersc %lu",&test_size)!=1) { 
+  if (sscanf(buf,"fibersc %lu", &test_size)!=1) { 
     nk_vc_printf("Don't understand %s\n",buf);
     return -1;
   }
