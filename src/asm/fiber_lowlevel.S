@@ -105,7 +105,8 @@ ENTRY(nk_fiber_fork)
     movq $-1, %rdx
 
     /* Save FPRs onto stack with xsave */
-    XSAVE 0x0(%rsp)
+    //XSAVE 0x0(%rsp)
+    FIBER_SAVE_FPRS(rsp)
 
     #endif
 
@@ -176,12 +177,12 @@ ENTRY(nk_fiber_yield)
     movq $-1, %rax
     movq $-1, %rdx
 
-
     /* place new stack ptr into 2nd argument register */
     movq %rsp, %rsi
 
     /* Save FPRs onto stack with xsave */
-    XSAVE 0x0(%rsp)
+    //XSAVE 0x0(%rsp)
+    FIBER_SAVE_FPRS(rsp)
 
     #endif
     
@@ -200,7 +201,8 @@ ENTRY(_nk_fiber_context_switch)
     movq $-1, %rdx
 
     /* restore all FPRs from stack w/ xrstor */
-    XRSTOR 0x0(%rsp)
+    //XRSTOR 0x0(%rsp)
+    FIBER_RESTORE_FPRS(rsp)
 
     #endif
    
@@ -220,7 +222,8 @@ ENTRY(_nk_fiber_context_switch_early)
     movq 0x0(%rdi), %rsp 
     
     // Pop callee saved GPRs off new fiber's stack
-    FIBER_RESTORE_GPRS_EARLY()
+    //FIBER_RESTORE_GPRS_EARLY()
+    FIBER_RESTORE_GPRS()
 
     // return to new fiber's last instruction
     retq
@@ -255,7 +258,8 @@ ENTRY(nk_fiber_yield_to)
     movq $-1, %rdx
 
     /* Save FPRs onto stack with xsave */
-    XSAVE 0x0(%rsp)
+    //XSAVE 0x0(%rsp)
+    FIBER_SAVE_FPRS(rsp)
     
     /* place new stack ptr into 3rd argument register */
     movq %rsp, %rdx
@@ -297,7 +301,8 @@ ENTRY(_nk_fiber_join_yield)
     movq $-1, %rdx
 
     /* Save FPRs onto stack with xsave */
-    XSAVE 0x0(%rsp)
+    //XSAVE 0x0(%rsp)
+    FIBER_SAVE_FPRS(rsp)
 
     #endif
     
@@ -325,7 +330,8 @@ ENTRY(_nk_fiber_fp_save)
     movq $0, 568(%r15)  
     movq $-1, %rax
     movq $-1, %rdx
-    XSAVE 0x0(%r15)
+    //XSAVE 0x0(%r15)
+    FIBER_SAVE_FPRS(r15)
     movq %r15, 0x10(%rdi)
     popq %r15
     popq %rdx

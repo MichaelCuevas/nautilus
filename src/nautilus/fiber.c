@@ -1223,7 +1223,8 @@ __attribute__((noreturn)) void _nk_fiber_yield_to(nk_fiber_t *f_to, int earlyRet
     if (!(new_to)) { 
       if (curr_fiber->is_idle) { /* if no fiber to sched and curr idle, no reason to switch */
         *(uint64_t*)(rsp+GPR_RAX_OFFSET) = 0;
-        _nk_fiber_context_switch_early(curr_fiber);
+        //_nk_fiber_context_switch_early(curr_fiber);
+        _nk_fiber_context_switch(curr_fiber);
       } else { /* if no fiber to sched and not currenty in idle fiber, switch to idle fiber */
           new_to = state->idle_fiber;
       }
