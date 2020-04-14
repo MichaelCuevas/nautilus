@@ -882,6 +882,27 @@ int test_new_yield(){
   return 0;
 }
 
+int test_fiber_creation()
+{
+  nk_fiber_t *test_fib;
+  vc = get_cur_thread()->vc;
+  uint64_t start_time = rdtsc();
+  uint64_t end_time = rdtsc();
+  uint64_t tot_time = 0;
+  int i = 0;
+  udelay(5000000);
+  for (i = 0; i < N; i++) {
+    start_time = rdtsc();
+    nk_fiber_create(&timer1, 0, 0, 0, &test_fib);
+    end_time = rdtsc();
+    free(test_fib->stack);
+    free(test_fib);
+    tot_time += end_time - start_time; 
+  }
+  nk_vc_printf("Average Creation Time: %lu\n", tot_time/N);
+  return 0; 
+}
+
 
 /******************* Test Handlers *******************/
 
@@ -1042,6 +1063,12 @@ static int handle_fibers12 (char *buf, void *priv)
   return 0;
 }
 
+static int handle_fibers13 (char *buf, void *priv)
+{
+  test_fiber_creation();
+  return 0;
+}
+
   
 /******************* Shell Structs ********************/
 
@@ -1153,6 +1180,12 @@ static struct shell_cmd_impl fibers_impl_new_yield = {
   .handler  = handle_fibers12,
 };
 
+static struct shell_cmd_impl fibers_impl_creation = {
+  .cmd      = "fibercreation",
+  .help_str = "fibercreation",
+  .handler  = handle_fibers13,
+};
+
 /******************* Shell Commands *******************/
 
 nk_register_shell_cmd(fibers_impl1);
@@ -1173,3 +1206,4 @@ nk_register_shell_cmd(fibers_impl_all);
 nk_register_shell_cmd(fibers_impl_all_1);
 nk_register_shell_cmd(fibers_impl_all_2);
 nk_register_shell_cmd(fibers_impl_new_yield);
+nk_register_shell_cmd(fibers_impl_creation);

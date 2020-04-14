@@ -246,7 +246,8 @@ ENTRY(nk_fiber_yield_test)
     movq %rsp, %rsi
 
     /* Save FPRs onto stack with xsave */
-    XSAVE 0x0(%rsp)
+    //XSAVE 0x0(%rsp)
+    FIBER_SAVE_FPRS(rsp)
 
     #endif
     
