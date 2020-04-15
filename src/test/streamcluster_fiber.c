@@ -1100,14 +1100,18 @@ static void* localSearchSub(void* arg_) {
   sprintf(buf,"scorg-%d",arg->pid);
 
   // TODO MAC: May not be needed
+  #ifdef ENABLE_FIBERS
   nk_fiber_counting_barrier(arg->barrier_children); // wait for everyone to join group
+  #endif
   DEBUG("pkmedian starts\n");
         
   pkmedian(arg->points,arg->kmin,arg->kmax,arg->kfinal,arg->pid,arg->barrier_children);
 
   // Let the "parent" fiber know you're done before exiting
   // This way the parent fiber doesn't have to nk_fiber_join() with each child
+  #ifdef ENABLE_FIBERS
   nk_fiber_counting_barrier(arg->barrier_parent);
+  #endif
   return NULL;
 }
 
@@ -1135,9 +1139,9 @@ static void localSearch( Points* points, long kmin, long kmax, long* kfinal ) {
       arg[i].pid = i;
       arg[i].kfinal = kfinal;
 
+#ifdef ENABLE_FIBERS
       arg[i].barrier_children = &barrier;
       arg[i].barrier_parent = &barrier2;
-#ifdef ENABLE_FIBERS
       int targetproc = startproc!=-1 ? startproc+i : -1;
       nk_fiber_start((nk_fiber_fun_t)localSearchSub,(void*)&arg[i],0,FSTACK_DEFAULT,targetproc,fibers+i);
 #else
