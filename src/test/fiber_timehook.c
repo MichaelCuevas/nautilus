@@ -39,6 +39,8 @@
 #include <test/fiberbench/rijndael.h>
 #include <test/fiberbench/md5.h>
 #include <test/fiberbench/knn.h>
+#include <nautilus/stack.h>
+#include <nautilus/dynarray.h>
 
 #define DO_PRINT       0
 
@@ -50,20 +52,27 @@
 
 // --------------------------------------------------------------------------------
 
+NK_STACK_DECL(int);
+// NK_DYNARRAY_DECL(int);
 //******************* Macros/Helper Functions/Globals *******************/
 // Seeding macro
-#define SEED() (srand48(rdtsc() % 128))
+#define SEED() (srand48(rdtsc() % 1024))
+#define YIELDING 0
 
 // Malloc with error checking
 #define MALLOC(n) ({void *__p = malloc(n); if (!__p) { PRINT("Malloc failed\n"); panic("Malloc failed\n"); } __p;})
 
-#define M 300 // Loop iteration --- timing loops
-#define DOT 1000 // Dot product induction variable
+#define M 1000 // Loop iteration --- timing loops
+#define DOT 100000 // Dot product induction variable
 
 // Dimensions for arrays --- matrix multiply
-#define M1 20 
-#define M2 40
-#define M3 30
+#define M1 200
+#define M2 400
+#define M3 300
+
+// Conditions
+#define RET_CHECK 1
+#define LOOP_CHECK 0
 
 extern struct nk_virtual_console *vc;
 extern void nk_simple_timing_loop(uint64_t);
@@ -74,8 +83,14 @@ extern void nk_simple_timing_loop(uint64_t);
 // and vice versa.
 int ACCESS_WRAPPER = 0;
 
+extern void *address_hook_0;
+extern void *address_hook_1;
+extern void *address_hook_2;
+extern void *address_hook_3;
+extern void *long_hook;
+
 // Linked List Implementation
-__attribute__((noinline)) List_t * createList(uint64_t start, uint64_t size) 
+__attribute__((noinline)) List_t * createList(uint32_t start, uint32_t size) 
 {
 	// Allocate head
 	Node_t *L_head = MALLOC(sizeof(Node_t));
@@ -95,7 +110,7 @@ __attribute__((noinline)) List_t * createList(uint64_t start, uint64_t size)
 
 	// Fill list with values based on the "start"
 	// argument
-	uint64_t a, incr = start;
+	uint32_t a, incr = start;
 	for (a = 0; a < size; a++)
   	{
 		incr += (a * a) + incr;
@@ -116,8 +131,18 @@ __attribute__((noinline)) List_t * createList(uint64_t start, uint64_t size)
   	return LL;
 }
 
+// Terrible idea
+__attribute__((noinline)) void destroyTree(TreeNode_t *T)
+{
+	if (T->left) { destroyTree(T->left); }
+	if (T->right) { destroyTree(T->right); }
+	free(T);
+
+	return;
+}
+
 // Binary Tree Implementation
-__attribute__((noinline)) TreeNode_t * createTree(uint64_t start, uint64_t size) {
+__attribute__((noinline)) TreeNode_t * createTree(uint32_t start, uint32_t size) {
   
 	// Allocate root node	 
 	TreeNode_t *T_root = MALLOC(sizeof(TreeNode_t));
@@ -138,7 +163,7 @@ __attribute__((noinline)) TreeNode_t * createTree(uint64_t start, uint64_t size)
 		TreeNode_t *T_iterator = T_root;
 		
 		// Find a "random" value for the tree node
-		uint64_t val = (lrand48() % 10000); 
+		uint32_t val = (lrand48() % 10000); 
 		srand48(0);
 
 		// Allocate a new node
@@ -181,7 +206,7 @@ __attribute__((noinline)) TreeNode_t * createTree(uint64_t start, uint64_t size)
   	return T_root;
 }
 
-#define MAX_QUEUE_SIZE 1000
+#define MAX_QUEUE_SIZE 20000
 // Create queue for BST --- used for traversal
 __attribute__((noinline)) TreeQueue_t * createQueue(void) {
 
@@ -202,12 +227,12 @@ __attribute__((noinline)) TreeQueue_t * createQueue(void) {
 }
 
 // Create array of random unsigned integers
-__attribute__((noinline)) uint64_t * createRandArray(uint64_t size) {
+__attribute__((noinline)) uint32_t * createRandArray(uint32_t size) {
 
 	SEED();
 
 	// Allocate array of length "size"
-	uint64_t *r_array = MALLOC(sizeof(uint64_t) * size);
+	uint32_t *r_array = MALLOC(sizeof(uint32_t) * size);
 	if(!r_array) { return NULL; }
 
 	// Fill array with "random" values
@@ -257,6 +282,8 @@ void timing_loop_2(void *i, void **o)
 
 	ACCESS_WRAPPER = 1;
 
+	uint64_t start = rdtsc();
+
 	while(a < M)
 	{
 		nk_simple_timing_loop(200);
@@ -265,8 +292,10 @@ void timing_loop_2(void *i, void **o)
 
 	ACCESS_WRAPPER = 0;
 
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+
 	// Print out timing data --- end of test
-	_nk_fiber_print_data();
+	_nk_fiber_print_data(1);
 	
 	return;
 }
@@ -301,6 +330,8 @@ void s_timing_loop_2(void *i, void **o)
 
 	ACCESS_WRAPPER = 1;
 
+	uint64_t start = rdtsc(); 
+	
 	while(a < M)
 	{
 		if (a % 25 == 0) { nk_simple_timing_loop(200000000); }
@@ -309,9 +340,11 @@ void s_timing_loop_2(void *i, void **o)
 	}
 
 	ACCESS_WRAPPER = 0;
+	
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
 
 	// Print out timing data --- end of test
-	_nk_fiber_print_data();
+	_nk_fiber_print_data(2);
 
 	return;
 }
@@ -324,13 +357,19 @@ void dot_prod_1(void *i, void **o)
 {
 	nk_fiber_set_vc(vc);
 	int k, first = 8, second = 134; // Arbitrary
+	
+	volatile sint16_t *b = gen_rand_array(sint16_t, DOT, 1);
+	volatile sint16_t *c = gen_rand_array(sint16_t, DOT, 1);
 
+#if 0
 	// Allocate on stack
-	uint64_t b[DOT];
-	uint64_t c[DOT];
+	volatile uint64_t b[DOT];
+	volatile uint64_t c[DOT];
+#endif
 
 	ACCESS_WRAPPER = 1;
 
+#if 0
 	// Fill arrays
 	for (k = 0; k < DOT; k++)
 	{
@@ -340,9 +379,10 @@ void dot_prod_1(void *i, void **o)
 		first += 4;
 		second += 2; 
 	}
+#endif
 
 	// Dot product
-	volatile uint64_t sum = 0;
+	volatile sint64_t sum = 0;
 	for (k = 0; k < DOT; k++) {
 		sum += (b[k] * c[k]);
 	}
@@ -356,14 +396,19 @@ void dot_prod_2(void *i, void **o)
 {
 	nk_fiber_set_vc(vc);
 	int k, first = 5, second = 127; // Arbitrary
+	
+	volatile sint16_t *b = gen_rand_array(sint16_t, DOT, 1);
+	volatile sint16_t *c = gen_rand_array(sint16_t, DOT, 1);
 
-	// Allcoate on stack
-	uint64_t b[DOT];
-	uint64_t c[DOT];
+#if 0
+	// Allocate on stack
+	volatile uint64_t b[DOT];
+	volatile uint64_t c[DOT];
+#endif
 
 	ACCESS_WRAPPER = 1;
 
-	uint64_t start = rdtsc();
+#if 0
 	// Fill arrays
 	for (k = 0; k < DOT; k++)
 	{
@@ -373,21 +418,23 @@ void dot_prod_2(void *i, void **o)
 		first += 4;
 		second += 2; 
 	}
-
-	uint64_t finish = rdtsc();
+#endif
+	
+	uint64_t start = rdtsc();
 
 	// Dot product
-	volatile uint64_t sum = 0;
+	volatile sint64_t sum = 0;
 	for (k = 0; k < DOT; k++) {
 		sum += (b[k] * c[k]);
 	}
-	
+
 	ACCESS_WRAPPER = 0;
 	
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+	
 	// Print out timing data --- end of test
-	_nk_fiber_print_data();
+	_nk_fiber_print_data(3);
 
-	nk_vc_printf("finish - start: %lu\n", finish - start);
 
 	return;
 }
@@ -396,18 +443,19 @@ void dot_prod_2(void *i, void **o)
 
 // ------
 // Benchmark 4 --- linked-list traversal (ll_traversal_1, ll_traversal_2)
+#define LL_SIZE 10000
 void ll_traversal_1(void *i, void **o)
 {
 	nk_fiber_set_vc(vc);
 	
 	// Create the list
-	List_t *LL = createList(7, 800); // Start val of 7, 800 node list
+	List_t *LL = createList(7, LL_SIZE); // Start val of 7
 	if (!LL) { return; } 
 
 	ACCESS_WRAPPER = 1;
 
 	// Set up iterator for list
-	volatile uint64_t sum = 0;
+	volatile uint32_t sum = 0;
 	Node_t *iterator = LL->head;
 
 	// Traverse list, calculate sum
@@ -419,8 +467,9 @@ void ll_traversal_1(void *i, void **o)
 
 	ACCESS_WRAPPER = 0;
 
-	// No frees at the end --- FIX
-	
+	iterator = LL->head;
+	while (iterator != NULL) { Node_t *temp = iterator; iterator = iterator->next; free(temp); }
+
 	return;
 }
 
@@ -429,13 +478,15 @@ void ll_traversal_2(void *i, void **o)
 	nk_fiber_set_vc(vc);
 	
 	// Create the list
-	List_t *LL = createList(11, 800); // Start val of 11, 800 node list
+	List_t *LL = createList(7, LL_SIZE); // Start val of 7
 	if (!LL) { return; } 
 
 	ACCESS_WRAPPER = 1;
+	
+	uint32_t start = rdtsc();
 
 	// Set up iterator for list
-	volatile uint64_t sum = 0;
+	volatile uint32_t sum = 0;
 	Node_t *iterator = LL->head;
 
 	// Traverse list, calculate sum
@@ -447,10 +498,13 @@ void ll_traversal_2(void *i, void **o)
 
 	ACCESS_WRAPPER = 0;
 
-	_nk_fiber_print_data();
-  
-	// No frees at the end --- FIX
+	nk_vc_printf("\nThe interval: %lu", rdtsc() - start);
 	
+	_nk_fiber_print_data(4);
+  
+	iterator = LL->head;
+	while (iterator != NULL) { Node_t *temp = iterator; iterator = iterator->next; free(temp); }
+		
 	return;
 }
 // ------
@@ -463,19 +517,19 @@ void mm_1(void *i, void **o)
 	nk_fiber_set_vc(vc);
 
 	// Allocate on stack --- known dimensions
-	uint64_t first[M1][M2];
-	uint64_t second[M2][M3];
-	uint64_t result[M1][M3];
+	volatile uint32_t first[M1][M2];
+	volatile uint32_t second[M2][M3];
+	volatile uint32_t result[M1][M3];
 
+#if 0
 	// Zero initialize
 	memset(first, 0, sizeof(first));
 	memset(second, 0, sizeof(second));
 	memset(result, 0, sizeof(result));
+#endif
 
-	uint64_t start = 4; // arbitrary
+	uint32_t start = 4; // arbitrary
 	int a, b, c;
-
-	ACCESS_WRAPPER = 1;
 
 	// Fill first and second matricies
 	for (a = 0; a < M1; a++) {
@@ -489,11 +543,13 @@ void mm_1(void *i, void **o)
 		  second[a][b] = (a * b);
 		}
 	}
+	
+	ACCESS_WRAPPER = 1;
 
 	// Naive matrix multiply
 	for (a = 0; a < M1; a++) {
 		for (b = 0; b < M3; b++) {
-			uint64_t sum = 0;     
+			uint32_t sum = 0;     
 
 			for (c = 0; c < M2; c++) {
 				sum += (first[a][c] * second[c][b]);
@@ -513,21 +569,19 @@ void mm_2(void *i, void **o)
  	nk_fiber_set_vc(vc);
 
 	// Allocate on stack --- known dimensions
-	uint64_t first[M1][M2];
-	uint64_t second[M2][M3];
-	uint64_t result[M1][M3];
+	volatile uint32_t first[M1][M2];
+	volatile uint32_t second[M2][M3];
+	volatile uint32_t result[M1][M3];
 
+#if 0
 	// Zero initialize
 	memset(first, 0, sizeof(first));
 	memset(second, 0, sizeof(second));
 	memset(result, 0, sizeof(result));
+#endif
 
-	uint64_t start = 8; // arbitrary
+	uint32_t start = 8; // arbitrary
 	int a, b, c;
-
-	ACCESS_WRAPPER = 1;
-
-	uint64_t start_1 = rdtsc();
 
 	// Fill first and second matricies
 	for (a = 0; a < M1; a++) {
@@ -542,10 +596,14 @@ void mm_2(void *i, void **o)
 		}
 	}
 
+	ACCESS_WRAPPER = 1;
+
+	uint64_t start_1 = rdtsc();
+
 	// Naive matrix multiply
 	for (a = 0; a < M1; a++) {
 		for (b = 0; b < M3; b++) {
-			uint64_t sum = 0;     
+			uint32_t sum = 0;     
 
 			for (c = 0; c < M2; c++) {
 				sum += (first[a][c] * second[c][b]);
@@ -559,7 +617,7 @@ void mm_2(void *i, void **o)
 
 	ACCESS_WRAPPER = 0;
   
-	_nk_fiber_print_data();
+	_nk_fiber_print_data(5);
 	
 	nk_vc_printf("finish - start: %lu\n", finish - start_1);
   
@@ -575,14 +633,14 @@ void bt_traversal_1(void *i, void **o)
 	nk_fiber_set_vc(vc); 
 
 	// Allocate and build tree
-	TreeNode_t *tree = createTree(4520, 800); // Start val = 4520, 800 nodes
+	TreeNode_t *tree = createTree(4520, LL_SIZE); // Start val = 4520, 800 nodes
 	if (!tree) { return; }
 
 	// Generate array of random integers, 50 elements
 	int size = 50;
-	uint64_t *nums = createRandArray(size); 
+	uint32_t *nums = createRandArray(size); 
 
-	uint64_t totalTraversalSum = 0;
+	uint32_t totalTraversalSum = 0;
 	int a;
 
 	ACCESS_WRAPPER = 1;
@@ -591,14 +649,14 @@ void bt_traversal_1(void *i, void **o)
 	// way: the tree is traversed to search for each number in "nums"
 	// and all nodes' "val" fields that are visited during the the tree
 	// traversal/search are summed and added to totalTraversalSum
-	for (a = 0; a < size; a++)
+	for (a = 0; a < size; a++) // i.e. 50 searches
 	{
-		uint64_t currTraversalSum = 0;
+		uint32_t currTraversalSum = 0;
 		volatile TreeNode_t *iterator = tree;
 
 		while (iterator != NULL)
 		{
-			uint64_t currValue = iterator->value;
+			uint32_t currValue = iterator->value;
 			currTraversalSum += currValue;
 
 			if (nums[a] == currValue) { break; } 
@@ -611,7 +669,7 @@ void bt_traversal_1(void *i, void **o)
 
 	ACCESS_WRAPPER = 0;
 
-	// Not freeing --- FIX
+	destroyTree(tree);
 
 	return;
 }
@@ -621,30 +679,32 @@ void bt_traversal_2(void *i, void **o)
   	nk_fiber_set_vc(vc); 
 
 	// Allocate and build tree
-	TreeNode_t *tree = createTree(5380, 800); // Start val = 5380, 800 nodes
+	TreeNode_t *tree = createTree(5380, LL_SIZE); // Start val = 5380, 800 nodes
 	if (!tree) { return; }
 
 	// Generate array of random integers, 50 elements
 	int size = 50;
-	uint64_t *nums = createRandArray(size); 
+	uint32_t *nums = createRandArray(size); 
 
-	uint64_t totalTraversalSum = 0;
+	uint32_t totalTraversalSum = 0;
 	int a;
 
 	ACCESS_WRAPPER = 1;
+
+	uint64_t start = rdtsc();
 
 	// Calculate a sum using "nums", sum is calculated in the following
 	// way: the tree is traversed to search for each number in "nums"
 	// and all nodes' "val" fields that are visited during the the tree
 	// traversal/search are summed and added to totalTraversalSum
-	for (a = 0; a < size; a++)
+	for (a = 0; a < size; a++) // i.e. 50 searches
 	{
-		uint64_t currTraversalSum = 0;
+		uint32_t currTraversalSum = 0;
 		volatile TreeNode_t *iterator = tree;
 
 		while (iterator != NULL)
 		{
-			uint64_t currValue = iterator->value;
+			uint32_t currValue = iterator->value;
 			currTraversalSum += currValue;
 
 			if (nums[a] == currValue) { break; } 
@@ -656,10 +716,12 @@ void bt_traversal_2(void *i, void **o)
 	}
 
 	ACCESS_WRAPPER = 0;
-
-	_nk_fiber_print_data();
 	
-	// Not freeing --- FIX
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+	
+	destroyTree(tree);
+
+	_nk_fiber_print_data(6);
 	
 	return;
 }
@@ -668,31 +730,31 @@ void bt_traversal_2(void *i, void **o)
 
 // ------
 // Benchmark 7 --- naive matrix multiply with random dimensions (rand_mm_1, rand_mm_2) 
+#define MAX_DIMS 400
 void rand_mm_1(void *i, void **o)
 {
 	nk_fiber_set_vc(vc);
 	
-	SEED();
-
 	// Generate random dimensions
-	uint64_t R1 = (lrand48() % 50);
-	uint64_t R2 = (lrand48() % 50);
-	uint64_t R3 = (lrand48() % 50);
+	uint32_t *dims = gen_rand_array(uint32_t, 3, 0);
+	uint32_t R1 = (dims[0] % MAX_DIMS) + 1;
+	uint32_t R2 = (dims[1] % MAX_DIMS) + 1;
+	uint32_t R3 = (dims[2] % MAX_DIMS) + 1;
 
 	// Allocate on stack
-	uint64_t first[R1][R2];
-	uint64_t second[R2][R3];
-	uint64_t result[R1][R3];
+	volatile uint32_t first[R1][R2];
+	volatile uint32_t second[R2][R3];
+	volatile uint32_t result[R1][R3];
 
+#if 0
 	// Zero initialize
 	memset(first, 0, sizeof(first));
 	memset(second, 0, sizeof(second));
 	memset(result, 0, sizeof(result));
+#endif
 
-	uint64_t start = 9; // arbitrary
+	uint32_t start = 9; // arbitrary
 	int a, b, c;
-
-	ACCESS_WRAPPER = 1;
 
 	// Fill first and second matricies
 	for (a = 0; a < R1; a++) {
@@ -706,11 +768,13 @@ void rand_mm_1(void *i, void **o)
 		  second[a][b] = (a * b);
 		}
 	}
+	
+	ACCESS_WRAPPER = 1;
 
 	// Naive matrix multiply
 	for (a = 0; a < R1; a++) {
 		for (b = 0; b < R3; b++) {
-			uint64_t sum = 0;     
+			uint32_t sum = 0;     
 
 			for (c = 0; c < R2; c++) {
 				sum += (first[a][c] * second[c][b]);
@@ -729,27 +793,26 @@ void rand_mm_2(void *i, void **o)
 {
  	nk_fiber_set_vc(vc);
 
-	SEED();
-
 	// Generate random dimensions
-	uint64_t R1 = (lrand48() % 50);
-	uint64_t R2 = (lrand48() % 50);
-	uint64_t R3 = (lrand48() % 50);
+	uint32_t *dims = gen_rand_array(uint32_t, 3, 0);
+	uint32_t R1 = (dims[0] % MAX_DIMS);
+	uint32_t R2 = (dims[1] % MAX_DIMS);
+	uint32_t R3 = (dims[2] % MAX_DIMS);
 
 	// Allocate on stack
-	uint64_t first[R1][R2];
-	uint64_t second[R2][R3];
-	uint64_t result[R1][R3];
+	volatile uint32_t first[R1][R2];
+	volatile uint32_t second[R2][R3];
+	volatile uint32_t result[R1][R3];
 
+#if 0
 	// Zero initialize
 	memset(first, 0, sizeof(first));
 	memset(second, 0, sizeof(second));
 	memset(result, 0, sizeof(result));
+#endif
 
-	uint64_t start = 6; // arbitrary
+	uint32_t start = 6; // arbitrary
 	int a, b, c;
-
-	ACCESS_WRAPPER = 1;
 
 	// Fill first and second matricies
 	for (a = 0; a < R1; a++) {
@@ -764,10 +827,14 @@ void rand_mm_2(void *i, void **o)
 		}
 	}
 
+	ACCESS_WRAPPER = 1;
+	
+	uint64_t start_1 = rdtsc();
+
 	// Naive matrix multiply
 	for (a = 0; a < R1; a++) {
 		for (b = 0; b < R3; b++) {
-			uint64_t sum = 0;     
+			uint32_t sum = 0;     
 
 			for (c = 0; c < R2; c++) {
 				sum += (first[a][c] * second[c][b]);
@@ -778,8 +845,10 @@ void rand_mm_2(void *i, void **o)
 	}
 	  
 	ACCESS_WRAPPER = 0;
+	
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start_1);
   
-  	_nk_fiber_print_data();
+  	_nk_fiber_print_data(7);
 	
 	return;
 }
@@ -795,12 +864,12 @@ void bt_lo_traversal_1(void *i, void **o)
 	// Allocate and set up queue for level-order traversal
 	TreeQueue_t *LO = createQueue();
 
-	// Allocate and set up tree --- Start = 5170, 800 nodes
-	TreeNode_t *tree = createTree(5170, 800);
+	// Allocate and set up tree --- Start = 5170, 10000 nodes
+	TreeNode_t *tree = createTree(5170, LL_SIZE);
 
 	// Set up iterator for traversal
 	TreeNode_t *iterator = tree;
-	volatile uint64_t sum = 0;
+	volatile uint32_t sum = 0;
 
 	ACCESS_WRAPPER = 1;
 
@@ -832,8 +901,9 @@ void bt_lo_traversal_1(void *i, void **o)
  
 	ACCESS_WRAPPER = 0; 
 	
-	// Not freeing --- FIX
-
+	destroyTree(tree);
+	free(LO);
+		
 	return;
 }
 
@@ -844,15 +914,17 @@ void bt_lo_traversal_2(void *i, void **o)
 	// Allocate and set up queue for level-order traversal
 	TreeQueue_t *LO = createQueue();
 
-	// Allocate and set up tree --- Start = 4720, 800 nodes
-	TreeNode_t *tree = createTree(4720, 800);
+	// Allocate and set up tree --- Start = 4720, 10000 nodes
+	TreeNode_t *tree = createTree(4720, LL_SIZE);
 
 	// Set up iterator for traversal
 	TreeNode_t *iterator = tree;
-	volatile uint64_t sum = 0;
+	volatile uint32_t sum = 0;
 
 	ACCESS_WRAPPER = 1;
 
+	uint64_t start = rdtsc();
+	
 	// Calculate sum of nodes via level-order traversal
 	while (iterator != NULL)
 	{
@@ -881,11 +953,14 @@ void bt_lo_traversal_2(void *i, void **o)
  
 
 	ACCESS_WRAPPER = 0; 
-  
-	_nk_fiber_print_data();
 	
-	// Not freeing --- FIX
-
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+  
+	destroyTree(tree);
+	free(LO);
+	
+	_nk_fiber_print_data(8);
+	
 	return;
 }
 // ------
@@ -954,7 +1029,7 @@ void operations_2(void *i, void **o)
 
 	ACCESS_WRAPPER = 0;
 
-	_nk_fiber_print_data();
+	_nk_fiber_print_data(9);
 	
 	nk_vc_printf("finish - start: %lu\n", finish - start);
 
@@ -965,7 +1040,7 @@ void operations_2(void *i, void **o)
 
 // ------
 // Benchmark 10  --- time_hook data collection, only one fiber
-#define TH 10000
+#define TH 100000
 extern int ACCESS_HOOK;
 void time_hook_test(void *i, void **o)
 {
@@ -973,7 +1048,7 @@ void time_hook_test(void *i, void **o)
 
 	int a = 0;
 
-	ACCESS_HOOK = 1;
+	ACCESS_HOOK = ACCESS_WRAPPER = 1;
 
 	while(a < TH)
 	{
@@ -981,7 +1056,7 @@ void time_hook_test(void *i, void **o)
 		a++;
 	}
 
-	ACCESS_HOOK = 0;
+	ACCESS_HOOK = ACCESS_WRAPPER = 0;
 
 	get_time_hook_data();
 
@@ -1006,15 +1081,15 @@ void rijndael_1(void *i, void **o)
 	unsigned char *src = (unsigned char *) (MALLOC(sizeof(unsigned char) * bit_size));
 	unsigned char *dst = (unsigned char *) (MALLOC(sizeof(unsigned char) * bit_size));
 	rijndael_ctx *new_ctx = (rijndael_ctx *) (MALLOC(sizeof(rijndael_ctx)));
-	
+
+	// Set key and src to random set of bytes
+	nk_get_rand_bytes(key, len);
+	nk_get_rand_bytes(src, len);
+
 	ACCESS_WRAPPER = 1;
 	
 	while(a < M)
 	{
-		// Set key and src to random set of bytes
-		nk_get_rand_bytes(key, len);
-		nk_get_rand_bytes(src, len);
-
 		// Set up context struct with key	
 		rijndael_set_key(new_ctx, key, bit_size, 1); // Set up for encryption
 
@@ -1048,14 +1123,16 @@ void rijndael_2(void *i, void **o)
 	unsigned char *dst = (unsigned char *) (MALLOC(sizeof(unsigned char) * bit_size));
 	rijndael_ctx *new_ctx = (rijndael_ctx *) (MALLOC(sizeof(rijndael_ctx)));
 
+	// Set key and src to random set of bytes
+	nk_get_rand_bytes(key, len);
+	nk_get_rand_bytes(src, len);
+
 	ACCESS_WRAPPER = 1;
+	
+	uint64_t start = rdtsc();
 	
 	while(a < M)
 	{
-		// Set key and src to random set of bytes
-		nk_get_rand_bytes(key, len);
-		nk_get_rand_bytes(src, len);
-
 		// Set up context struct with key	
 		rijndael_set_key(new_ctx, key, bit_size, 1); // Set up for encryption
 
@@ -1070,7 +1147,9 @@ void rijndael_2(void *i, void **o)
 
 	ACCESS_WRAPPER = 0;
 	
-	_nk_fiber_print_data();
+	_nk_fiber_print_data(11);
+	
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
 	
 	// No freeing --- FIX
 
@@ -1094,12 +1173,12 @@ void sha1_1(void *i, void **o)
 	// NOTE --- relying on error checking from MALLOC
 	unsigned char *input = (unsigned char *) (MALLOC(sizeof(unsigned char) * input_size));
 	unsigned char *output = (unsigned char *) (MALLOC(sizeof(unsigned char) * sha_output_size));
+
+	// Set input to random bytes
+	nk_get_rand_bytes(input, input_size);
 	
 	while(a < M)
 	{
-		// Set input to random bytes
-		nk_get_rand_bytes(input, input_size);
-
 		// Generate hash
 		sha1(input, input_size, output);
 
@@ -1120,18 +1199,20 @@ void sha1_2(void *i, void **o)
 	const int sha_output_size = 20;
 	int a = 0, input_size = 192; // 192 byte input
 	
-	ACCESS_WRAPPER = 1;
-	
 	// Allocate all pieces necessary for SHA-1 implementation
 	// NOTE --- relying on error checking from MALLOC
 	unsigned char *input = (unsigned char *) (MALLOC(sizeof(unsigned char) * input_size));
 	unsigned char *output = (unsigned char *) (MALLOC(sizeof(unsigned char) * sha_output_size));
 
+	// Set input to random bytes
+	nk_get_rand_bytes(input, input_size);
+	
+	ACCESS_WRAPPER = 1;
+
+	uint64_t start = rdtsc();
+
 	while(a < M)
 	{
-		// Set input to random bytes
-		nk_get_rand_bytes(input, input_size);
-
 		// Generate hash
 		sha1(input, input_size, output);
 
@@ -1140,7 +1221,9 @@ void sha1_2(void *i, void **o)
 
 	ACCESS_WRAPPER = 0;
 	
-	_nk_fiber_print_data();
+	_nk_fiber_print_data(12);
+	
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
 	
 	// No freeing --- FIX
 	
@@ -1158,18 +1241,19 @@ void md5_1(void *i, void **o)
 	const int md5_output_size = 16;
 	int a = 0, input_size = 192; // 192 byte input
 	
-	ACCESS_WRAPPER = 1;
 	
 	// Allocate all pieces necessary for SHA-1 implementation
 	// NOTE --- relying on error checking from MALLOC
 	unsigned char *input = (unsigned char *) (MALLOC(sizeof(unsigned char) * input_size));
 	unsigned char *output = (unsigned char *) (MALLOC(sizeof(unsigned char) * md5_output_size));
+
+	// Set input to random bytes
+	nk_get_rand_bytes(input, input_size);
 	
+	ACCESS_WRAPPER = 1;
+
 	while(a < M)
 	{
-		// Set input to random bytes
-		nk_get_rand_bytes(input, input_size);
-
 		// Generate hash
 		md5(input, input_size, output);
 
@@ -1190,18 +1274,20 @@ void md5_2(void *i, void **o)
 	const int md5_output_size = 16;
 	int a = 0, input_size = 192; // 192 byte input
 	
-	ACCESS_WRAPPER = 1;
-	
 	// Allocate all pieces necessary for SHA-1 implementation
 	// NOTE --- relying on error checking from MALLOC
 	unsigned char *input = (unsigned char *) (MALLOC(sizeof(unsigned char) * input_size));
 	unsigned char *output = (unsigned char *) (MALLOC(sizeof(unsigned char) * md5_output_size));
 	
+	// Set input to random bytes
+	nk_get_rand_bytes(input, input_size);
+	
+	ACCESS_WRAPPER = 1;
+	
+	uint64_t start = rdtsc();
+
 	while(a < M)
 	{
-		// Set input to random bytes
-		nk_get_rand_bytes(input, input_size);
-
 		// Generate hash
 		md5(input, input_size, output);
 
@@ -1210,9 +1296,18 @@ void md5_2(void *i, void **o)
 
 	ACCESS_WRAPPER = 0;
 	
-	_nk_fiber_print_data();
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+	
+	_nk_fiber_print_data(13);
 	
 	// No freeing --- FIX
+#if RET_CHECK
+	nk_vc_printf("addr0: %p\n", address_hook_0);
+	nk_vc_printf("addr1: %p\n", address_hook_1);
+	nk_vc_printf("addr2: %p\n", address_hook_2);
+	nk_vc_printf("addr3: %p\n", address_hook_3);
+	nk_vc_printf("long: %p\n", long_hook);
+#endif
 	
 	return;
 }
@@ -1221,36 +1316,36 @@ void md5_2(void *i, void **o)
 
 // ------
 // Benchmark 14 --- fibonacci via dynamic programming (fib_1, fib_2)
+#define NUM_FIB 1
 void fib_1(void *i, void **o)
 {
 	nk_fiber_set_vc(vc);
 	
 	int a = 0;
-	SEED();
+	uint32_t *fib_nums = gen_rand_array(uint32_t, NUM_FIB, 0);	
 
 	ACCESS_WRAPPER = 1;
 
-	while (a < M)
+	for (; a < NUM_FIB; a++)
 	{
-		uint64_t fib_num = lrand48() % 75;
+		uint64_t fib_num = fib_nums[a]; // zext
 		
-		// Allocate table on stack
-		uint64_t memo[fib_num + 2];
-		memset(memo, 0, sizeof(memo));
+		volatile uint64_t memo[2];
 		
 		// Set base cases
 		memo[0] = 0;
 		memo[1] = 1;
 
-		uint64_t k;
-		for (k = 0; k < fib_num; k++) {
-			memo[k] = memo[k - 1] + memo[k - 2];
+		int k;
+		for (k = 2; k < fib_num; k++) {
+			uint64_t temp = memo[1];
+			memo[1] = memo[0] + memo[1];
+			memo[0] = temp;
 		}
-	
-		a++;
 	}
 	
 	ACCESS_WRAPPER = 0;
+	
 	
 	return;
 }
@@ -1260,34 +1355,44 @@ void fib_2(void *i, void **o)
 	nk_fiber_set_vc(vc);
 		
 	int a = 0;
-	SEED();
+	uint32_t *fib_nums = gen_rand_array(uint32_t, NUM_FIB, 0);	
 
 	ACCESS_WRAPPER = 1;
+	
+	uint64_t start = rdtsc();
 
-	while (a < M)
+	for (; a < NUM_FIB; a++)
 	{
-		uint64_t fib_num = lrand48() % 75;
+		uint64_t fib_num = fib_nums[a]; // zext
 		
-		// Allocate table on stack
-		uint64_t memo[fib_num + 2];
-		memset(memo, 0, sizeof(memo));
-
+		volatile uint64_t memo[2];
+		
 		// Set base cases
 		memo[0] = 0;
 		memo[1] = 1;
 
-		uint64_t k;
-		for (k = 0; k < fib_num; k++) {
-			memo[k] = memo[k - 1] + memo[k - 2];
+		int k;
+		for (k = 2; k < fib_num; k++) {
+			uint64_t temp = memo[1];
+			memo[1] = memo[0] + memo[1];
+			memo[0] = temp;
 		}
-	
-		a++;
 	}
-
+	
 	ACCESS_WRAPPER = 0;
 	
-	_nk_fiber_print_data();
-	
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+
+	_nk_fiber_print_data(14);
+
+#if RET_CHECK
+	nk_vc_printf("addr0: %p\n", address_hook_0);
+	nk_vc_printf("addr1: %p\n", address_hook_1);
+	nk_vc_printf("addr2: %p\n", address_hook_2);
+	nk_vc_printf("addr3: %p\n", address_hook_3);
+	nk_vc_printf("long: %p\n", long_hook);
+#endif
+
 	return;
 }
 // ------
@@ -1300,24 +1405,25 @@ void knn_1(void *i, void **o)
 	nk_fiber_set_vc(vc);
 
 	// Declare parameters
-	uint32_t k = 3, dims = 5, num_ex = 20;
-	
-	ACCESS_WRAPPER = 1;
-	
+	uint32_t k = 8, dims = 5, num_ex = 200;
+
 	// Set up classifier
 	struct KNNContext *ctx = KNN_build_context(k, dims, num_ex, distance_manhattan, aggregate_median);
 
 	// Build a new point to classify
 	struct KNNPoint *kp = KNN_build_point(dims);
-
+	
+	ACCESS_WRAPPER = 1;
+	
 	// Classify the point
 	double classification = KNN_classify(kp, ctx);
+
+	ACCESS_WRAPPER = 0;
 
 	// Clean up
 	KNN_point_destroy(kp);
 	KNN_context_destroy(ctx);	
 
-	ACCESS_WRAPPER = 0;
 	
 	return;
 }
@@ -1327,29 +1433,343 @@ void knn_2(void *i, void **o)
 	nk_fiber_set_vc(vc);
 
 	// Declare parameters
-	uint32_t k = 3, dims = 5, num_ex = 20;
-	
-	ACCESS_WRAPPER = 1;
-	
+	uint32_t k = 8, dims = 5, num_ex = 2000;
+
 	// Set up classifier
 	struct KNNContext *ctx = KNN_build_context(k, dims, num_ex, distance_manhattan, aggregate_median);
 
 	// Build a new point to classify
 	struct KNNPoint *kp = KNN_build_point(dims);
 
+	ACCESS_WRAPPER = 1;
+	
+	uint64_t start = rdtsc();
+
 	// Classify the point
 	double classification = KNN_classify(kp, ctx);
 
-	// Clean up
-	KNN_point_destroy(kp);
-	KNN_context_destroy(ctx);	
-
 	ACCESS_WRAPPER = 0;
 	
-	_nk_fiber_print_data();
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+
+	// Clean up
+	KNN_point_destroy(kp);
+	
+	KNN_context_destroy(ctx);	
+
+	_nk_fiber_print_data(15);
 
 	nk_vc_printf("class: %f\n", classification);
 
+#if RET_CHECK
+	nk_vc_printf("addr0: %p\n", address_hook_0);
+	nk_vc_printf("addr1: %p\n", address_hook_1);
+	nk_vc_printf("addr2: %p\n", address_hook_2);
+	nk_vc_printf("addr3: %p\n", address_hook_3);
+	nk_vc_printf("long: %p\n", long_hook);
+#endif
+
+	return;
+}
+// ------
+
+
+// ------
+// Benchmark 16 --- cycle detection (cycle_1, cycle_2)
+#define NUM_GRAPHS 100
+
+void cycle_1(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+	
+	// Declare parameters
+	uint32_t nvtx = 80; 
+	int weighted = 0;
+
+	// Build randomized graph
+	Graph *g[NUM_GRAPHS];
+	volatile int detected[NUM_GRAPHS]; 
+
+	int q;
+	for (q = 0; q < NUM_GRAPHS; q++) { g[q] = generate_full_graph(nvtx, weighted); }
+	
+	ACCESS_WRAPPER = 1;
+
+	for (q = 0; q < NUM_GRAPHS; q++) { detected[q] = detect_cycles(g[q]); }
+
+	ACCESS_WRAPPER = 0;
+	
+	// Clean up
+	for (q = 0; q < NUM_GRAPHS; q++) { destroy_graph(g[q]); }
+
+	return;
+}
+
+
+void cycle_2(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+	
+	// Declare parameters
+	uint32_t nvtx = 80; 
+	int weighted = 0;
+
+	// Build randomized graph
+	Graph *g[NUM_GRAPHS];
+	volatile int detected[NUM_GRAPHS]; 
+
+	int q;
+	for (q = 0; q < NUM_GRAPHS; q++) { g[q] = generate_full_graph(nvtx, weighted); }
+	
+	ACCESS_WRAPPER = 1;
+
+	uint64_t start = rdtsc();
+
+	for (q = 0; q < NUM_GRAPHS; q++) { detected[q] = detect_cycles(g[q]); }
+
+	ACCESS_WRAPPER = 0;
+	
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+
+	// Clean up
+	for (q = 0; q < NUM_GRAPHS; q++) { destroy_graph(g[q]); }
+
+	_nk_fiber_print_data(16);
+
+	return;
+}
+// ------
+
+
+// ------
+// Benchmark 17 --- unweighted MST (mst_1, mst_2)
+void mst_1(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+
+	// Declare parameters
+	uint32_t nvtx = 80; 
+	int weighted = 0;
+
+	// Build randomized graph
+	Graph *g[NUM_GRAPHS];
+
+	int q;
+	for (q = 0; q < NUM_GRAPHS; q++) { g[q] = generate_full_graph(nvtx, weighted); }
+	
+	ACCESS_WRAPPER = 1;
+
+	for (q = 0; q < NUM_GRAPHS; q++) { build_mst_unweighted(g[q]); }
+
+	ACCESS_WRAPPER = 0;
+	
+	// Clean up
+	for (q = 0; q < NUM_GRAPHS; q++) { destroy_graph(g[q]); }
+
+	return;
+}
+
+
+void mst_2(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+	
+	// Declare parameters
+	uint32_t nvtx = 80; 
+	int weighted = 0;
+
+	// Build randomized graph
+	Graph *g[NUM_GRAPHS];
+
+	int q;
+	for (q = 0; q < NUM_GRAPHS; q++) { g[q] = generate_full_graph(nvtx, weighted); }
+	
+	ACCESS_WRAPPER = 1;
+
+	uint64_t start = rdtsc();
+
+	for (q = 0; q < NUM_GRAPHS; q++) { build_mst_unweighted(g[q]); }
+
+	ACCESS_WRAPPER = 0;
+	
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+	
+	// Clean up
+	for (q = 0; q < NUM_GRAPHS; q++) { destroy_graph(g[q]); }
+
+	_nk_fiber_print_data(17);
+
+	return;
+}
+// ------
+
+
+// ------
+// Benchmark 18 --- dijkstra (dijkstra_1, dijkstra_2)
+void dijkstra_1(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+
+	// Declare parameters
+	uint32_t nvtx = 800; 
+	int weighted = 1;
+
+	// Build randomized graph
+	Graph *g = generate_full_graph(nvtx, weighted);
+
+	ACCESS_WRAPPER = 1;
+
+	dijkstra(g);
+
+	ACCESS_WRAPPER = 0;
+	
+	// Clean up
+	destroy_graph(g);
+
+	return;
+}
+
+void dijkstra_2(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+	
+	// Declare parameters
+	uint32_t nvtx = 800; 
+	int weighted = 1;
+
+	// Build randomized graph
+	Graph *g = generate_full_graph(nvtx, weighted);
+
+	ACCESS_WRAPPER = 1;
+
+	uint64_t start = rdtsc();
+
+	dijkstra(g);
+
+	ACCESS_WRAPPER = 0;
+	
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+	
+	// Clean up
+	destroy_graph(g);
+
+	_nk_fiber_print_data(18);
+
+	return;
+}
+// ------
+
+
+// ------
+// Benchmark 19 --- quicksort (qsort_1, qsort_2)
+#define ELEMENTS 10000
+void qsort_1(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+	
+	int *testing = gen_rand_array(int, ELEMENTS, 1);
+	
+	ACCESS_WRAPPER = 1;
+
+	int *sorted = quicksort_driver(testing, ELEMENTS, int);
+
+	ACCESS_WRAPPER = 0;
+
+	free(testing);
+	free(sorted);
+
+#if 0
+	int x;
+	for (x = 0; x < ELEMENTS; x++) { nk_vc_printf("%d ", testing[x]); }
+	nk_vc_printf("\n");
+#endif
+
+	return;
+}
+
+void qsort_2(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+	
+	int *testing = gen_rand_array(int, ELEMENTS, 1);
+	
+	ACCESS_WRAPPER = 1;
+
+	uint64_t start = rdtsc();
+
+	int *sorted = quicksort_driver(testing, ELEMENTS, int);
+
+	ACCESS_WRAPPER = 0;
+
+	free(testing);
+	free(sorted);
+
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+
+#if 0
+	int x;
+	for (x = 0; x < ELEMENTS; x++) { nk_vc_printf("%d ", testing[x]); }
+	nk_vc_printf("\n");
+#endif
+
+	_nk_fiber_print_data(19);
+	
+	return;
+}
+// ------
+
+
+// ------
+// Benchmark 20 --- radix sort (radix_1, radix_2)
+void radix_1(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+	
+	int *testing = gen_rand_array(int, ELEMENTS, 1);
+	
+	ACCESS_WRAPPER = 1;
+
+	radix_driver(testing, ELEMENTS, 32);
+
+	ACCESS_WRAPPER = 0;
+
+	free(testing);
+
+#if 0
+	int x;
+	for (x = 0; x < ELEMENTS; x++) { nk_vc_printf("%d ", testing[x]); }
+	nk_vc_printf("\n");
+#endif
+
+	return;
+}
+
+void radix_2(void *i, void **o)
+{
+	nk_fiber_set_vc(vc);
+	
+	int *testing = gen_rand_array(int, ELEMENTS, 1);
+	
+	ACCESS_WRAPPER = 1;
+
+	uint64_t start = rdtsc();
+
+	radix_driver(testing, ELEMENTS, 32);
+
+	ACCESS_WRAPPER = 0;
+
+	free(testing);
+
+	nk_vc_printf("finish - start: %lu\n", rdtsc() - start);
+
+#if 0
+	int x;
+	for (x = 0; x < ELEMENTS; x++) { nk_vc_printf("%d ", testing[x]); }
+	nk_vc_printf("\n");
+#endif
+
+	_nk_fiber_print_data(20);
+	
 	return;
 }
 // ------
@@ -1361,9 +1781,11 @@ void knn_2(void *i, void **o)
 int test_fibers_bench(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
-  vc = get_cur_thread()->vc;
-  // nk_fiber_start(timing_loop_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(timing_loop_2, 0, 0, FSTACK_2MB, 0, &simple2);
+  vc = get_cur_thread()->vc; 
+#if YIELDING
+  nk_fiber_start(timing_loop_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(timing_loop_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1371,8 +1793,10 @@ int test_fibers_bench2(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(s_timing_loop_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(s_timing_loop_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(s_timing_loop_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(s_timing_loop_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1380,8 +1804,10 @@ int test_fibers_bench3(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(dot_prod_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(dot_prod_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(dot_prod_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(dot_prod_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1389,8 +1815,10 @@ int test_fibers_bench4(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(ll_traversal_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(ll_traversal_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(ll_traversal_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(ll_traversal_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1398,8 +1826,10 @@ int test_fibers_bench5(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(mm_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(mm_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(mm_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif 
+  nk_fiber_start(mm_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1423,11 +1853,13 @@ int test_fibers_bench6(){
 
 #else
   
-  // nk_fiber_start(bt_traversal_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(bt_traversal_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(bt_traversal_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(bt_traversal_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
 
 #endif
-  
+
   return 0;
 
 }
@@ -1436,8 +1868,10 @@ int test_fibers_bench7(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(rand_mm_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(rand_mm_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(rand_mm_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(rand_mm_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1445,8 +1879,10 @@ int test_fibers_bench8(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(bt_lo_traversal_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(bt_lo_traversal_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(bt_lo_traversal_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(bt_lo_traversal_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1454,8 +1890,10 @@ int test_fibers_bench9(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(operations_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(operations_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(operations_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(operations_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1463,7 +1901,7 @@ int test_fibers_bench10(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  nk_fiber_start(time_hook_test, 0, 0, FSTACK_2MB, 0, &simple1);
+  nk_fiber_start(time_hook_test, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
   return 0;
 }
 
@@ -1471,8 +1909,10 @@ int test_fibers_bench11(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(rijndael_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(rijndael_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(rijndael_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(rijndael_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1480,8 +1920,10 @@ int test_fibers_bench12(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(sha1_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(sha1_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(sha1_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(sha1_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1489,8 +1931,10 @@ int test_fibers_bench13(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(md5_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(md5_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(md5_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(md5_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1498,8 +1942,10 @@ int test_fibers_bench14(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(fib_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(fib_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(fib_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(fib_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1507,8 +1953,65 @@ int test_fibers_bench15(){
   nk_fiber_t *simple1;
   nk_fiber_t *simple2;
   vc = get_cur_thread()->vc;
-  // nk_fiber_start(knn_1, 0, 0, FSTACK_2MB, 0, &simple1);
-  nk_fiber_start(knn_2, 0, 0, FSTACK_2MB, 0, &simple2);
+#if YIELDING
+  nk_fiber_start(knn_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(knn_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
+  return 0;
+}
+
+int test_fibers_bench16(){
+  nk_fiber_t *simple1;
+  nk_fiber_t *simple2;
+  vc = get_cur_thread()->vc;
+#if YIELDING
+  nk_fiber_start(cycle_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(cycle_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
+  return 0;
+}
+
+int test_fibers_bench17(){
+  nk_fiber_t *simple1;
+  nk_fiber_t *simple2;
+  vc = get_cur_thread()->vc;
+#if YIELDING
+  nk_fiber_start(mst_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(mst_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
+  return 0;
+}
+
+int test_fibers_bench18(){
+  nk_fiber_t *simple1;
+  nk_fiber_t *simple2;
+  vc = get_cur_thread()->vc;
+#if YIELDING
+  nk_fiber_start(dijkstra_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(dijkstra_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
+  return 0;
+}
+
+int test_fibers_bench19(){
+  nk_fiber_t *simple1;
+  nk_fiber_t *simple2;
+  vc = get_cur_thread()->vc;
+#if YIELDING
+  nk_fiber_start(qsort_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(qsort_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
+  return 0;
+}
+
+int test_fibers_bench20(){
+  nk_fiber_t *simple1;
+  nk_fiber_t *simple2;
+  vc = get_cur_thread()->vc;
+#if YIELDING
+  nk_fiber_start(radix_1, 0, 0, FSTACK_2MB, TARGET_CPU, &simple1);
+#endif
+  nk_fiber_start(radix_2, 0, 0, FSTACK_2MB, TARGET_CPU, &simple2);
   return 0;
 }
 
@@ -1622,6 +2125,43 @@ handle_fibers15 (char * buf, void * priv)
   return 0;
 }
 
+static int
+handle_fibers16 (char * buf, void * priv)
+{
+  test_fibers_bench16();
+  return 0;
+}
+
+static int
+handle_fibers17 (char * buf, void * priv)
+{
+  test_fibers_bench17();
+  return 0;
+}
+
+static int
+handle_fibers18 (char * buf, void * priv)
+{
+  test_fibers_bench18();
+  return 0;
+}
+
+static int
+handle_fibers19 (char * buf, void * priv)
+{
+  test_fibers_bench19();
+  return 0;
+}
+
+static int
+handle_fibers20 (char * buf, void * priv)
+{
+  test_fibers_bench20();
+  return 0;
+}
+
+
+
 
 // --------------------------------------------------------------------------------
 
@@ -1715,6 +2255,36 @@ static struct shell_cmd_impl fibers_impl15 = {
   .handler  = handle_fibers15,
 };
 
+static struct shell_cmd_impl fibers_impl16 = {
+  .cmd      = "fiberbench16",
+  .help_str = "fiberbench16",
+  .handler  = handle_fibers16,
+};
+
+static struct shell_cmd_impl fibers_impl17 = {
+  .cmd      = "fiberbench17",
+  .help_str = "fiberbench17",
+  .handler  = handle_fibers17,
+};
+
+static struct shell_cmd_impl fibers_impl18 = {
+  .cmd      = "fiberbench18",
+  .help_str = "fiberbench18",
+  .handler  = handle_fibers18,
+};
+
+static struct shell_cmd_impl fibers_impl19 = {
+  .cmd      = "fiberbench19",
+  .help_str = "fiberbench19",
+  .handler  = handle_fibers19,
+};
+
+static struct shell_cmd_impl fibers_impl20 = {
+  .cmd      = "fiberbench20",
+  .help_str = "fiberbench20",
+  .handler  = handle_fibers20,
+};
+
 
 // --------------------------------------------------------------------------------
 
@@ -1735,6 +2305,11 @@ nk_register_shell_cmd(fibers_impl12);
 nk_register_shell_cmd(fibers_impl13);
 nk_register_shell_cmd(fibers_impl14);
 nk_register_shell_cmd(fibers_impl15);
+nk_register_shell_cmd(fibers_impl16);
+nk_register_shell_cmd(fibers_impl17);
+nk_register_shell_cmd(fibers_impl18);
+nk_register_shell_cmd(fibers_impl19);
+nk_register_shell_cmd(fibers_impl20);
 
 
 

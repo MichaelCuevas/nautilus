@@ -1,4 +1,4 @@
-/* 
+/*
  * This file is part of the Nautilus AeroKernel developed
  * by the Hobbes and V3VEE Projects with funding from the 
  * United States National  Science Foundation and the Department of Energy.  
@@ -55,6 +55,7 @@
 #define FIBER_DEBUG(fmt, args...) DEBUG_PRINT("fiber: " fmt, ##args)
 #define FIBER_WARN(fmt, args...)  WARN_PRINT("fiber: " fmt, ##args)
 #define ERROR(fmt, args...) ERROR_PRINT("fiber: " fmt, ##args)
+#define FIBER_TIMING 1
 
 /* Constants used for fiber thread setup and fiber fork */
 #define FIBER_THREAD_STACK_SIZE NAUT_CONFIG_FIBER_THREAD_STACK_SIZE
@@ -77,9 +78,9 @@
 /* Time-hook testing */
 #define YIELD_HOOK 0
 #define SNAPSHOT_HOOK 1
-#define NULL_HOOK 2
+#define NULL_HOOK 0
 
-#define HOOK_FUNC YIELD_HOOK
+// #define HOOK_FUNC YIELD_HOOK
 
 #define DB(x) outb(x, 0xe9)
 #define DHN(x) outb(((x & 0xF) >= 10) ? (((x & 0xF) - 10) + 'a') : ((x & 0xF) + '0'), 0xe9)
@@ -111,6 +112,7 @@ extern int _nk_fiber_join_yield();
 
 /* Assembly stubs for yield functions. Users use these functions to perform context switches */
 extern int nk_fiber_yield();
+extern int nk_fiber_yield_test();
 extern int nk_fiber_yield_to(nk_fiber_t* f_to, int earlyRetFlag);
 
 #if NAUT_CONFIG_FIBER_FSAVE
@@ -126,7 +128,7 @@ static fiber_state* _get_fiber_state()
 }
 
 // returns the fiber currently running on the current CPU
-nk_fiber_t* nk_fiber_current()
+__attribute__((annotate("nohook"))) nk_fiber_t* nk_fiber_current()
 {
   return _get_fiber_state()->curr_fiber;
 }
@@ -416,12 +418,70 @@ __attribute__((noreturn, annotate("nohook"))) static void _nk_fiber_yield_helper
     list_add_tail(&(f_from->sched_node), fiber_sched_queue);
     _UNLOCK_SCHED_QUEUE(state);
   }
+  
   // Begin context switch (register saving and stack switch)
   _nk_fiber_context_switch(f_to);
 
   // Tells compiler this point is unreachable, stops compiler warning
   __builtin_unreachable();
 }
+
+__attribute__((noreturn)) static void _nk_fiber_yield_helper_test(nk_fiber_t *f_to, fiber_state *state, nk_fiber_t* f_from)
+{
+  // If a fiber is not waiting or exiting, change its status to yielding
+  if (f_from->f_status == READY && !(f_from->is_idle)) {
+    f_from->f_status = YIELD;
+  }
+  
+  // Update fiber state and f_to's curr_cpu/status
+  _LOCK_FIBER(f_to);
+  state->curr_fiber = f_to;
+  f_to->curr_cpu = my_cpu_id();
+  f_to->f_status = RUN;
+  
+  // Unlock fibers and perform context switch
+  _UNLOCK_FIBER(f_to);
+
+  // Change the vc of the current thread if we aren't switching away from the idle fiber
+  // TODO: MAC: Might not do what I think it does
+  if (!f_from->is_idle){ 
+    nk_fiber_set_vc(f_from->vc);
+  }
+  
+  // DEBUG: Shows when we are switching to idle fiber. We want to minimize this!
+  /*if (f_to->is_idle) {
+    FIBER_INFO("_nk_fiber_yield_helper() : Switched to idle fiber on CPU %d\n", my_cpu_id());
+  }*/
+  
+  // Enqueue the current fiber (if it is not the idle fiber)
+  if (!(f_from->is_idle)) {
+    // Gets the sched queue for the current CPU
+    _LOCK_SCHED_QUEUE(state);
+    struct list_head *fiber_sched_queue = &(state->f_sched_queue);
+     
+    // DEBUG: Prints the fiber that's about to be enqueued
+    //FIBER_DEBUG("_nk_fiber_yield_helper() : About to enqueue fiber: %p \n", f_from);
+    
+    _LOCK_FIBER(f_from);
+    f_from->f_status = READY;
+    f_from->curr_cpu = my_cpu_id();
+    _UNLOCK_FIBER(f_from);
+
+    // Adds fiber we're switching away from to the current CPU's fiber queue
+    list_add_tail(&(f_from->sched_node), fiber_sched_queue);
+    _UNLOCK_SCHED_QUEUE(state);
+  }
+  #if FIBER_TIMING
+    ((uint64_t*)(f_from->output))[1] = rdtsc();
+  #endif 
+  // Begin context switch (register saving and stack switch)
+  _nk_fiber_context_switch(f_to);
+
+  // Tells compiler this point is unreachable, stops compiler warning
+  __builtin_unreachable();
+}
+
+
 
 // C portion of function sed to switch away from a fiber that was just placed on a wait queue
 // This function is called from an assembly stub, _nk_fiber_join_yield, that is implemented
@@ -620,24 +680,36 @@ int nk_fiber_init()
 
     // Register time_hook instance for fibers
     uint64_t gran = nk_time_hook_get_granularity_ns();
-    // struct nk_time_hook *fiber_hook = nk_time_hook_register(_wrapper_nk_fiber_yield, 0, gran, NK_TIME_HOOK_ALL_CPUS, 0);
-    struct nk_time_hook *fiber_hook = nk_time_hook_register(_nk_snapshot_time_hook, 0, gran, 1, 0);
-    // struct nk_time_hook *fiber_hook = nk_time_hook_register(_nk_null_time_hook, 0, gran, 1, 0);
-    /*switch(HOOK_FUNC) 
+    struct nk_time_hook *fiber_hook;
+
+#if YIELD_HOOK
+	fiber_hook = nk_time_hook_register(_wrapper_nk_fiber_yield, 0, gran, NK_TIME_HOOK_ALL_CPUS, 0);
+#endif
+
+#if SNAPSHOT_HOOK
+    fiber_hook = nk_time_hook_register(_nk_snapshot_time_hook, 0, gran, NK_TIME_HOOK_ALL_CPUS, 0);
+#endif
+
+#if NULL_HOOK
+	fiber_hook = nk_time_hook_register(_nk_null_time_hook, 0, gran, NK_TIME_HOOK_ALL_CPUS, 0);
+#endif
+
+#if 0
+	switch(HOOK_FUNC) 
     {
 	case YIELD_HOOK:
 	{
-          fiber_hook = nk_time_hook_register(_wrapper_nk_fiber_yield, 0, gran,NK_TIME_HOOK_ALL_CPUS, 0);
+      fiber_hook = nk_time_hook_register(_wrapper_nk_fiber_yield, 0, gran,NK_TIME_HOOK_ALL_CPUS, 0);
 	  break;
 	}
 	case SNAPSHOT_HOOK:
 	{
-    	  fiber_hook = nk_time_hook_register(_nk_snapshot_time_hook, 0, gran,NK_TIME_HOOK_ALL_CPUS, 0);
+      fiber_hook = nk_time_hook_register(_nk_snapshot_time_hook, 0, gran,NK_TIME_HOOK_ALL_CPUS, 0);
 	  break;
 	}
 	case NULL_HOOK:
 	{
-          fiber_hook = nk_time_hook_register(_nk_null_time_hook, 0, gran,NK_TIME_HOOK_ALL_CPUS, 0);
+      fiber_hook = nk_time_hook_register(_nk_null_time_hook, 0, gran,NK_TIME_HOOK_ALL_CPUS, 0);
 	  break;
 	}
 	default:
@@ -645,8 +717,8 @@ int nk_fiber_init()
 	  panic("no fiber hook function found\n");
 	  break;
 	}
-    }*/
-
+    }
+#endif
 
     return 0;
 }
@@ -664,7 +736,7 @@ static int _check_empty(void *s)
     // nk_fiber_run will wake up fiber_thread if a fiber is added to queue when it is sleeping
 // WAIT: yields continuously, but will put fiber thread onto wait queue if no fibers are available
     // nk_fiber_run will wake up fiber_thread when a fiber is added to the queue
-static void __nk_fiber_idle(void *in, void **out)
+__attribute__((annotate("nohook"))) static void __nk_fiber_idle(void *in, void **out)
 {
   while (1) {
     // If we have fiber thread spin enabled
@@ -728,7 +800,7 @@ static void __fiber_thread(void *in, void **out)
   state->fiber_thread = get_cur_thread();
 
 #ifdef NAUT_CONFIG_COMPILER_TIMING 
-if (get_cpu()->id == 1) {
+if (get_cpu()->id == TARGET_CPU) {
    FIBER_INFO("CPUID --- %du\n", get_cpu()->id);
    extern nk_thread_t *hook_compare_fiber_thread;
    hook_compare_fiber_thread = _get_fiber_thread();
@@ -826,14 +898,78 @@ static void _debug_yield(nk_fiber_t *f_to)
 
 /****** WRAPPER FOR TIME_HOOK AND MEASUREMENTS *******/
 #define MAX_WRAPPER_COUNT 1000
-static uint64_t wrapper_data[MAX_WRAPPER_COUNT];
-static int time_interval = 0;
-extern int ACCESS_WRAPPER;
+uint64_t wrapper_data[MAX_WRAPPER_COUNT]; // Array to record intervals between nk_time_hook_fire calls
+uint64_t overhead_data[MAX_WRAPPER_COUNT]; // Array to record intervals between nk_time_hook_fire calls
+int time_interval = 0; // Index of wrapper_data, overhead_data
+static uint64_t rdtsc_wrapper_new = 0, rdtsc_wrapper_old = 0; // Deprecated functionality
+extern int ACCESS_WRAPPER; // Permissions global
 
+uint64_t last = 0; // Analogous to rdtsc_wrapper_old
+static uint64_t count = 0; // Analogous to time_interval
 
-static uint64_t rdtsc_wrapper_new = 0, rdtsc_wrapper_old = 0;
+static uint64_t idle_count = 0; // Statistics
+
+uint64_t overhead_count = 0; // Overhead stats
+uint32_t rdtsc_count = 0;
+
 __attribute__((annotate("nohook"))) int _wrapper_nk_fiber_yield()
 {
+
+#if 1
+
+  // Determine if we're on the target CPU and we're on the
+  // fiber thread of that target CPU
+  if ((my_cpu_id() == TARGET_CPU) &&
+      (get_cur_thread() == get_cpu()->f_state->fiber_thread)) { 
+
+	// Determine if we're on a non-idle fiber on 
+	// the fiber thread
+    if (!(nk_fiber_current()->is_idle)) { 
+
+	  // Determine if we have enough capacity in our data array
+	  // and if we have access/"permissions" to yield --- then
+	  // yield if necessary
+		
+#if 0
+
+	  if (ACCESS_WRAPPER) { nk_fiber_yield(); }
+
+#else
+
+	  if (ACCESS_WRAPPER && (time_interval < MAX_WRAPPER_COUNT)) { 
+		uint64_t temp_time = rdtsc();
+		wrapper_data[time_interval] = temp_time - last;
+	  	overhead_data[time_interval] = overhead_count - (rdtsc_count * 32);
+	
+		overhead_count = 0;
+	  	rdtsc_count = 0;
+		last = temp_time;
+		time_interval++;
+
+		nk_fiber_yield();
+
+		// last = rdtsc();
+      }
+	  
+#endif
+
+	}
+
+	/*
+	// We want to get a sense of how many times we're
+	// running in the idle fiber (under WAIT configuration)
+    } else {
+      idle_count++;
+      // DS("Hit idle\n");
+    }
+	*/
+
+  }
+
+#endif
+
+// Possibly deprecated functionality below
+#if 0
   // nk_vc_printf("time_interval now: %d\n", time_interval);
   if ((time_interval >= MAX_WRAPPER_COUNT) || (!ACCESS_WRAPPER)) {
     return 1;
@@ -847,9 +983,9 @@ __attribute__((annotate("nohook"))) int _wrapper_nk_fiber_yield()
   
   // rdtsc_wrapper_new = rdtsc();
   // wrapper_data[time_interval] = rdtsc_wrapper_new - rdtsc_wrapper_old; 
-  // delta = wrapper_data[time_interval] = rdtsc_wrapper_new - rdtsc_wrapper_old; 
+  // nk_vc_printf("time_interval now: %d\n", time_interval);
   
-  /*
+/*
   if (delta < 100) {
     FIBER_INFO("ACCESS_WRAPPER: %d\n", ACCESS_WRAPPER);
     BACKTRACE(FIBER_INFO, 20);
@@ -859,47 +995,113 @@ __attribute__((annotate("nohook"))) int _wrapper_nk_fiber_yield()
   
   // time_interval++;
    
-  fiber_state *state = _GET_FIBER_STATE();
-  if (state->fiber_thread == get_cur_thread()) {
+  // fiber_state *state = _GET_FIBER_STATE();
+  // if (state->fiber_thread == get_cur_thread()) {
+  extern nk_thread_t *hook_compare_fiber_thread;
+  if ((hook_compare_fiber_thread == get_cur_thread())
+	  && (!(nk_fiber_current()->is_idle)))  
+  {
     rdtsc_wrapper_new = temp_rdtsc;
     wrapper_data[time_interval] = rdtsc_wrapper_new - rdtsc_wrapper_old; 
     
     time_interval++;
    
     nk_fiber_yield();
-  }
   
-  rdtsc_wrapper_old = rdtsc();
+	rdtsc_wrapper_old = rdtsc();
+  } else { 
+  	DS("e");
+	DS("\n");
+  }
 
+#endif
+  
   return 0;
+
 }
 
+// Globals --- testing and snapshot functionality
 static int old_snapshot = 0;
+void *address_hook_0 = 0;
+void *address_hook_1 = 0;
+void *address_hook_2 = 0;
+void *address_hook_3 = 0;
+void *long_hook = 0;
+
 __attribute__((annotate("nohook"))) int _nk_snapshot_time_hook()
 {
   if ((time_interval >= MAX_WRAPPER_COUNT) || (!ACCESS_WRAPPER)) {
     return 0;
   }
+
+  // --- OLD --- Checking to see if we're on some fiber thread --- 
+  // fiber_state *state = _GET_FIBER_STATE();
+  // if (state->fiber_thread == get_cur_thread()) {
   
-  int curr_snapshot = rdtsc();
-  wrapper_data[time_interval] = curr_snapshot - old_snapshot;
-  old_snapshot = curr_snapshot;
-  time_interval++;
+  
+  // --- Checking to see if we're on the fiber thread of the target CPU --- 
+  extern nk_thread_t *hook_compare_fiber_thread; // Get fiber thread of target CPU
+
+  if ((hook_compare_fiber_thread == get_cur_thread())
+	  && (!(nk_fiber_current()->is_idle)))  
+  {
+	  	 
+	  int curr_snapshot = rdtsc(); 
+	  wrapper_data[time_interval] = curr_snapshot - old_snapshot;
+	  overhead_data[time_interval] = overhead_count; // - (rdtsc_count * 32);
+
+#if 0 
+	  // We want to get a sense of where the callers are coming
+	  // from --- want to confirm that the calls are coming from
+	  // a running fiber (non-idle) on the target CPU and not
+	  // some other thread or fiber
+	  if (address_hook_0 == 0) {
+		if (wrapper_data[time_interval] < 3000) { 
+			address_hook_0 = __builtin_return_address(0); 
+			address_hook_1 = __builtin_return_address(1); 
+			address_hook_2 = __builtin_return_address(2); 
+			address_hook_3 = __builtin_return_address(3); 
+		}
+	  }
+
+	  // If we have a large interval for some reason --- figure
+	  // out the caller and stash it somewhere
+	  if (long_hook == 0) {
+
+		if ((wrapper_data[time_interval] > 40000) 
+			&& (wrapper_data[time_interval] < 60000)) {   
+		  long_hook = __builtin_return_address(2); 
+		}
+	  
+	  }
+#endif
+
+	  overhead_count = 0;
+	  // rdtsc_count = 0;
+	  old_snapshot = curr_snapshot;
+	  time_interval++;
+
+  }
 
   return 0;
 }
 
+// Null hook used for testing purposes --- determine how long an
+// bare invocation of nk_time_hook_fire takes
 __attribute__((optnone, annotate("nohook"))) int _nk_null_time_hook()
 {
   return 0;
 }
 
-void _nk_fiber_print_data()
+void _nk_fiber_print_data(int id)
 {
   nk_time_hook_dump(); 
-  	
+  
+  nk_vc_printf("FIBERBENCH%dSTART\n", id); 
+
   nk_vc_printf("PRINTSTART\n");
 
+  // int temp = count;
   int temp = time_interval;
   nk_vc_printf("time_interval: %d\n", temp);
 
@@ -908,11 +1110,31 @@ void _nk_fiber_print_data()
     // nk_vc_printf("%lu : %lu\n", wrapper_data[i], missed_fires[i]);
     nk_vc_printf("%lu\n", wrapper_data[i]);
   } 
+ 
+  extern uint64_t early_count;
+  extern uint64_t late_count;
+
+  nk_vc_printf("EARLYSTART\n%lu\nEARLYEND\n", early_count);
+  nk_vc_printf("LATESTART\n%lu\nLATEEND\n", late_count);
+
+  nk_vc_printf("idle count: %lu\n",idle_count);
   
   nk_vc_printf("PRINTEND\n");
- 
+  
+  nk_vc_printf("OVERHEADSTART\n");
+  for (i = 0; i < temp; i++) {
+    // nk_vc_printf("%lu : %lu\n", wrapper_data[i], missed_fires[i]);
+    nk_vc_printf("%lu\n", overhead_data[i]);
+  } 
+  nk_vc_printf("OVERHEADEND\n");
+  nk_vc_printf("FIBERBENCH%dEND\n", id); 
+
   memset(wrapper_data, 0, sizeof(wrapper_data));
+  memset(wrapper_data, 0, sizeof(overhead_data));
   time_interval = 0;
+  last = count = 0;
+
+  early_count = late_count = 0;
 
   // For yield hook
   rdtsc_wrapper_new = 0;
@@ -1125,21 +1347,18 @@ __attribute__((noreturn, annotate("nohook"))) void _nk_fiber_yield(uint64_t rsp,
 { 
   // Checks if the current thread is the fiber thread (if not, error)
   fiber_state *state = _GET_FIBER_STATE();
+ 
+  // This function must be called by a fiber 
+  ASSERT(state->fiber_thread == get_cur_thread());
   
   // Saves current stack pointer into fiber struct
   nk_fiber_t *curr_fiber = state->curr_fiber;
   curr_fiber->rsp = rsp;
-
+ 
   #if NAUT_CONFIG_FIBER_FSAVE
   curr_fiber->fpu_state_offset = offset;
-  #endif
+  #endif 
 
-  if (state->fiber_thread != get_cur_thread()) {
-    // Abort yield somehow. Subtract from RSP and retq?
-    *(uint64_t*)(rsp+GPR_RAX_OFFSET) = -1; 
-    _nk_fiber_context_switch(curr_fiber);
-  }
-  
   // Pick a random fiber to yield to (NULL if no fiber in queue)
 
   _LOCK_SCHED_QUEUE(state);
@@ -1166,6 +1385,74 @@ __attribute__((noreturn, annotate("nohook"))) void _nk_fiber_yield(uint64_t rsp,
   *(uint64_t*)(rsp+GPR_RAX_OFFSET) = 0; 
   _nk_fiber_yield_helper(f_to, state, curr_fiber);
 }
+
+/* 
+ * _nk_fiber_yield_test (NOTE THAT THIS ISN'T CALLED DIRECTLY! Users call nk_fiber_yield())
+ *
+ * C portion of general purpose yield function. Yields execution to a randomly selected fiber.
+ * Calls to yield will first enter through assembly stub found in src/asm/fiber_lowlevel.S. They will
+ * then jump into this C code to perform part of the yield and call a yield _nk_fiber_yield_helper().
+ *
+ * ***** ALL PASSED FROM ASSEMBLY STUB *****
+ * @rsp: New stack pointer to be saved into curr_fiber.
+ * @offset: Placement of FP state on stack.
+ * 
+ *
+ * ***** "Returns" by overwriting RAX on the fiber's stack *****
+ * on error (called outside fiber thread), returns -1.
+ * on special case (idle fiber yield and no fiber available), returns 1
+ * otherwise, returns 0.
+ */
+__attribute__((noreturn)) void _nk_fiber_yield_test(uint64_t rsp, uint64_t offset)
+{ 
+  #if FIBER_TIMING
+    uint64_t time1 = rdtsc();
+  #endif 
+  // Checks if the current thread is the fiber thread (if not, error)
+  fiber_state *state = _GET_FIBER_STATE();
+ 
+  // This function must be called by a fiber 
+  ASSERT(state->fiber_thread == get_cur_thread());
+  
+  // Saves current stack pointer into fiber struct
+  nk_fiber_t *curr_fiber = state->curr_fiber;
+  curr_fiber->rsp = rsp;
+ 
+  #if NAUT_CONFIG_FIBER_FSAVE
+  curr_fiber->fpu_state_offset = offset;
+  #endif
+  #if FIBER_TIMING
+    ((uint64_t*)(curr_fiber->output))[0] = time1;
+  #endif
+
+  // Pick a random fiber to yield to (NULL if no fiber in queue)
+
+  _LOCK_SCHED_QUEUE(state);
+  nk_fiber_t *f_to = _rr_policy();
+  _UNLOCK_SCHED_QUEUE(state);
+  
+  #if NAUT_CONFIG_DEBUG_FIBERS
+  //_debug_yield(f_to);
+  #endif
+
+  // If f_to is NULL, there are no fibers in the queue
+  // We can either exit early and sleep (if curr_fiber is idle)
+  // Or we can switch to the idle fiber  
+  if (!(f_to)) { 
+    if (curr_fiber->is_idle) {
+      //Abort yield somehow? Subtract from RSP and retq?
+      *(uint64_t*)(rsp+GPR_RAX_OFFSET) = 1; 
+      _nk_fiber_context_switch(curr_fiber);
+    } else {
+        f_to = state->idle_fiber;
+    }
+  }
+  // Utility function to perform enqueue and other yield housekeeping
+  *(uint64_t*)(rsp+GPR_RAX_OFFSET) = 0; 
+  _nk_fiber_yield_helper_test(f_to, state, curr_fiber);
+}
+
+
 
 /* 
  * _nk_fiber_yield_to (NOTE THAT THIS ISN'T CALLED DIRECTLY! Users call nk_fiber_yield_to())

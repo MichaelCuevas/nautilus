@@ -108,6 +108,24 @@ static nk_thread_id_t list_tid;
 #define Keycode_QUEUE_SIZE 256
 #define Scancode_QUEUE_SIZE 512
 
+#define SCROLL 1
+#define SCROLL_DEBUG 1
+
+#if SCROLL
+
+#define SCROLL_BUF_HEIGHT (VGA_HEIGHT * 100)
+
+#endif
+
+
+#if SCROLL
+struct nk_vc_scbuf {
+  uint16_t **scbuf;
+  int line_num, line_ptr;
+  uint8_t filled, started, scrolled;
+};
+#endif
+
 struct nk_virtual_console {
   enum nk_vc_type type;
   char name[32];
@@ -128,6 +146,9 @@ struct nk_virtual_console {
   struct list_head vc_node;
   nk_wait_queue_t *waiting_threads;
   nk_timer_t *timer;
+#if SCROLL
+  struct nk_vc_scbuf *scroll_buf;
+#endif
 };
 
 
@@ -185,6 +206,366 @@ static void vc_timer_callback(void *state)
 #endif
 
 
+#if SCROLL
+struct nk_vc_scbuf *nk_create_scbuf()
+{
+	struct nk_vc_scbuf *new_sb = (struct nk_vc_scbuf *) (malloc(sizeof(struct nk_vc_scbuf)));
+	if (!new_sb) { panic("Malloc failed --- scbuf\n"); }
+
+	new_sb->scbuf = (uint16_t **) (malloc(sizeof(uint16_t *) * SCROLL_BUF_HEIGHT));
+	if (!(new_sb->scbuf)) { panic("Malloc failed --- scbuf\n"); }
+
+	int i;
+	for (i = 0; i < SCROLL_BUF_HEIGHT; i++)
+	{ 
+		new_sb->scbuf[i] = (uint16_t *) (malloc(sizeof(uint16_t) * VGA_WIDTH));
+		if (!(new_sb->scbuf[i])) { panic("Malloc failed --- scbuf\n"); }  
+		memset(new_sb->scbuf[i], 0, (sizeof(uint16_t) * VGA_WIDTH));
+	}
+
+	new_sb->line_num = new_sb->line_ptr = new_sb->filled = new_sb->started = new_sb->scrolled = 0;
+
+	return new_sb;
+}
+
+#define DB(x) outb(x, 0xe9)
+#define DHN(x) outb(((x & 0xF) >= 10) ? (((x & 0xF) - 10) + 'a') : ((x & 0xF) + '0'), 0xe9)
+#define DHB(x) DHN(x >> 4) ; DHN(x);
+#define DHW(x) DHB(x >> 8) ; DHB(x);
+#define DHL(x) DHW(x >> 16) ; DHW(x);
+#define DHQ(x) DHL(x >> 32) ; DHL(x);
+#define DS(x) { char *__curr = x; while(*__curr) { DB(*__curr); *__curr++; } }
+
+#define MODF(lp) ((lp + 1) % SCROLL_BUF_HEIGHT)
+#define MODB(lp) ((lp - 1 + SCROLL_BUF_HEIGHT) % SCROLL_BUF_HEIGHT)
+
+void _nk_vc_scbuf_add_line(struct nk_virtual_console *vc, struct nk_vc_scbuf *sb, int ln)
+{
+	int start = VGA_WIDTH * ln,
+		end = VGA_WIDTH * (ln + 1),
+		buf_i = start,
+		i;
+
+	uint16_t *cur_line = sb->scbuf[sb->line_num];
+	for (i = 0; buf_i < end; i++, buf_i++) {
+		cur_line[i] = vc->BUF[buf_i];
+	}
+
+	int temp_line_num = sb->line_num;
+	sb->line_num = sb->line_ptr = MODF((sb->line_ptr)); 
+	if (temp_line_num > sb->line_num) { sb->filled |= 1; }
+
+	return;
+}
+
+void nk_vc_scbuf_scrollup_add_line(struct nk_virtual_console *vc)
+{
+	if (!vc) { return; }
+	struct nk_vc_scbuf *sb = vc->scroll_buf;
+
+#if SCROLL_DEBUG
+	DS("\nal\n");
+	DHL((sb->line_num));
+	DS("\n\n");
+#endif
+
+	if (!(sb->started))
+	{
+		int i;
+		for (i = 0; i < (VGA_HEIGHT - 1); i++) {
+			_nk_vc_scbuf_add_line(vc, sb, i);
+		}	
+	}
+
+	_nk_vc_scbuf_add_line(vc, sb, (VGA_HEIGHT - 1));
+
+	sb->started |= 1;
+
+	return;
+
+}
+
+void inline nk_vc_scbuf_track_char(uint8_t c)
+{
+	char cc = (char) c;
+	DS(&cc);
+	return;
+}
+
+void nk_vc_print_buf(struct nk_virtual_console *vc)
+{
+	DS("\n\n\n");
+	DS("BSt:");
+	DS("\n");
+
+	int i;
+	for (i = 0; i < (VGA_HEIGHT * VGA_WIDTH); i++)
+	{
+		uint16_t next = vc->BUF[i];
+		uint8_t next_char = (uint8_t) (next & 0xFF);
+		nk_vc_scbuf_track_char(next_char);
+	}
+
+	DS("\n");
+	DS("ESt");
+	DS("\n\n\n");
+}
+
+void nk_vc_print_scbuf(struct nk_vc_scbuf *sb)
+{
+	DS("\n\n\n");
+	DS("S:");
+	DS("\n");
+
+	DS("ln: ");
+	DS("\n");
+	DHL((sb->line_num));
+
+	int start_line = (sb->filled) ? MODF((sb->line_num + 1)) : 0,
+		end_line = sb->line_num,
+		line_iter = start_line;
+
+	while(1)
+	{
+		if (line_iter == end_line) { break; }
+		
+		uint16_t *cur_line = sb->scbuf[line_iter];
+		char c_iter = (char) (cur_line[0] & 0xFF);
+		int i = 0;
+		
+		while ((c_iter != '\n')
+			   || (i < VGA_WIDTH))
+		{
+			DS(&c_iter);
+			i++;
+			c_iter = cur_line[i];	
+		}
+
+		DS("\n");
+
+		line_iter = MODF(line_iter); 
+	}	
+	
+	DS("\n");
+	DS("ES:");
+	DS("\n\n\n");
+	
+	return;
+}
+
+void _save_cur_line(struct nk_virtual_console *vc, struct nk_vc_scbuf *sb)
+{
+	int i, j;
+	uint16_t *line_to_save = sb->scbuf[sb->line_num];
+	for (i = (VGA_WIDTH * (VGA_HEIGHT - 1)), j = 0; i < (VGA_WIDTH * VGA_HEIGHT); i++, j++) {
+		line_to_save[j] = vc->BUF[i];	
+	}
+
+	return;
+}
+
+void _scbuf_up(struct nk_virtual_console *vc)
+{
+#if SCROLL_DEBUG
+	DS("up");
+	DS("\n");
+#endif
+
+	struct nk_vc_scbuf *sb = vc->scroll_buf;
+	
+	if ((!(sb->filled))
+		&& ((sb->line_ptr) < VGA_HEIGHT)) { return; }
+
+	int proj_line_ptr = MODB((sb->line_ptr));
+	if ((sb->filled)
+		&& ((proj_line_ptr - (sb->line_num)) < VGA_HEIGHT)) { return; }
+
+	if (!(sb->scrolled)) 
+	{
+		_save_cur_line(vc, sb);
+		sb->scrolled |= 1;
+	}
+
+#if SCROLL_DEBUG
+	DS("up n");
+	DS("\n");
+#endif
+
+	int i;
+	for (i = (VGA_HEIGHT - 1); i > 0; i--)
+	{
+		int j;
+		for (j = 0; j < VGA_WIDTH; j++) {
+			vc->BUF[(i * VGA_WIDTH) + j] = vc->BUF[((i - 1) * VGA_WIDTH) + j];
+		}
+	}
+
+	int actual_line_ptr = (proj_line_ptr - VGA_HEIGHT) + 1;
+   	uint16_t *pulled_line = sb->scbuf[actual_line_ptr];
+	for (i = 0; i < VGA_WIDTH; i++) {
+		vc->BUF[i] = pulled_line[i];
+	}
+
+	sb->line_ptr = proj_line_ptr;
+
+	copy_vc_to_display(vc);
+#ifdef NAUT_CONFIG_XEON_PHI
+	phi_cons_notify_redraw();
+#endif
+
+	return;
+}
+
+void nk_vc_scbuf_up()
+{
+	struct nk_virtual_console *vc = get_cur_thread()->vc;
+
+	if (!vc) { vc = default_vc; }
+	if (vc) { 
+		BUF_LOCK_CONF;
+		BUF_LOCK(vc);
+		_scbuf_up(vc);
+		BUF_UNLOCK(vc);
+	}
+
+	return;
+}
+
+void _scbuf_down(struct nk_virtual_console *vc)
+{
+#if SCROLL_DEBUG
+	DS("down");
+	DS("\n");
+#endif
+
+	struct nk_vc_scbuf *sb = vc->scroll_buf;
+
+	if (sb->line_ptr == sb->line_num) { sb->scrolled &= 0; return; }
+
+#if SCROLL_DEBUG
+	DHL((sb->line_ptr));
+	DS("\n");
+	DHL((sb->line_num));
+	DS("\n");
+#endif
+
+	int actual_line_ptr = MODF((sb->line_ptr));
+	DHL(actual_line_ptr);
+
+#if SCROLL_DEBUG
+	DS("down n");
+	DS("\n");
+#endif
+
+	int i, j;
+	for (i = 0; i < (VGA_WIDTH * (VGA_HEIGHT - 1)); i++) {
+		vc->BUF[i] = vc->BUF[i + VGA_WIDTH];
+	}
+  
+   	uint16_t *pulled_line = sb->scbuf[actual_line_ptr];
+	for (i = (VGA_WIDTH * (VGA_HEIGHT - 1)), j = 0; i < (VGA_WIDTH * VGA_HEIGHT); i++, j++) {
+		vc->BUF[i] = pulled_line[j];	
+	}
+	
+	sb->line_ptr = actual_line_ptr;
+
+	copy_vc_to_display(vc);
+#ifdef NAUT_CONFIG_XEON_PHI
+	phi_cons_notify_redraw();
+#endif
+
+	return;
+}
+
+void nk_vc_scbuf_down()
+{
+	struct nk_virtual_console *vc = get_cur_thread()->vc;
+
+	if (!vc) { vc = default_vc; }
+	if (vc) { 
+		BUF_LOCK_CONF;
+		BUF_LOCK(vc);
+		_scbuf_down(vc);
+		BUF_UNLOCK(vc);
+	}
+
+	return;
+}
+
+void _reset_buf(struct nk_virtual_console *vc)
+{
+	struct nk_vc_scbuf *sb = vc->scroll_buf;
+	if (sb->line_ptr == sb->line_num) { return; }
+
+	int line_iter = sb->line_num - (VGA_HEIGHT - 1),
+		i, j;
+
+	for (i = 0; i < VGA_HEIGHT; i++)
+	{
+		uint16_t *cur_line = sb->scbuf[line_iter];
+		for (j = 0; j < VGA_WIDTH; j++) {
+			vc->BUF[(i * VGA_WIDTH) + j] = cur_line[j];	
+		}
+
+		line_iter = MODF(line_iter);
+	}
+
+	sb->line_ptr = sb->line_num;
+	sb->scrolled &= 0;
+
+	copy_vc_to_display(vc);
+#ifdef NAUT_CONFIG_XEON_PHI
+	phi_cons_notify_redraw();
+#endif
+
+	return;
+}
+
+void nk_vc_reset_buf()
+{
+	struct nk_virtual_console *vc = get_cur_thread()->vc;
+
+	if (!vc) { vc = default_vc; }
+	if (vc) { 
+		BUF_LOCK_CONF;
+		BUF_LOCK(vc);
+		_reset_buf(vc);
+		BUF_UNLOCK(vc);
+	}
+
+	return;
+}
+
+static int
+handle_scbuf(char * buf, void * priv)
+{
+	struct nk_virtual_console *vc = get_cur_thread()->vc;
+
+	if (!vc) { vc = default_vc; nk_vc_printf("\ndid not get vc\n"); }
+	if (vc) { 
+		nk_vc_printf("\ngot vc\n");
+		BUF_LOCK_CONF;
+		BUF_LOCK(vc);
+		nk_vc_print_buf(vc);
+		nk_vc_print_scbuf(vc->scroll_buf);
+		BUF_UNLOCK(vc);
+	}
+
+	nk_vc_printf("done\n\n");
+
+	return 0;
+}
+
+static struct shell_cmd_impl scbuf_impl = {
+    .cmd      = "scbuf",
+	.help_str = "scbuf",
+	.handler  = handle_scbuf,
+};
+
+nk_register_shell_cmd(scbuf_impl);
+
+#endif
+
 struct nk_virtual_console *nk_create_vc (char *name, 
 					 enum nk_vc_type new_vc_type, 
 					 uint8_t attr, 
@@ -229,6 +610,10 @@ struct nk_virtual_console *nk_create_vc (char *name,
   nk_timer_set(new_vc->timer,VC_TIMER_NS,NK_TIMER_CALLBACK,vc_timer_callback,new_vc,0);
   nk_timer_start(new_vc->timer);
 #endif
+
+#if SCROLL
+  new_vc->scroll_buf = nk_create_scbuf();
+#endif 
   
   STATE_LOCK();
   list_add_tail(&new_vc->vc_node, &vc_list);
@@ -385,6 +770,10 @@ static int _vc_scrollup_specific(struct nk_virtual_console *vc)
   }
 #endif
 
+#if SCROLL
+  nk_vc_scbuf_scrollup_add_line(vc);
+#endif
+
   for (i=0;
        i<VGA_WIDTH*(VGA_HEIGHT-1);
        i++) {
@@ -445,6 +834,11 @@ static int _vc_display_char_specific(struct nk_virtual_console *vc, uint8_t c, u
   }
 
   uint16_t val = vga_make_entry(c, attr);
+
+#if SCROLL_DEBUG
+  // char test_val = (char) (val & 0xFF);
+  // nk_vc_scbuf_track_char(test_val);
+#endif
 
   if(x >= VGA_WIDTH || y >= VGA_HEIGHT) {
     return -1;
@@ -662,6 +1056,10 @@ static int _vc_putchar_specific(struct nk_virtual_console *vc, uint8_t c)
   if (!vc) { 
     return 0;
   }
+
+#if SCROLL_DEBUG
+  // nk_vc_scbuf_track_char(c);
+#endif
 
   if (c == ASCII_BS) {
 	  vc->cur_x--;
@@ -1175,14 +1573,15 @@ int nk_vc_getchar_extended(int wait)
     case KEY_NUMLOCK:
     case KEY_SCRLOCK:
     case KEY_KPHOME:
-    case KEY_KPUP:
+    // case KEY_KPUP:
     case KEY_KPMINUS:
     case KEY_KPLEFT:
     case KEY_KPCENTER:
     case KEY_KPRIGHT:
     case KEY_KPPLUS:
     case KEY_KPEND:
-    case KEY_KPDOWN:
+    case KEY_KPPGUP:
+    // case KEY_KPDOWN:
     case KEY_KPPGDN:
     case KEY_KPINSERT:
     case KEY_KPDEL:
@@ -1196,7 +1595,7 @@ int nk_vc_getchar_extended(int wait)
 	c='\n';
       }
       DEBUG("Regular key 0x%x ('%c')\n", c, c);
-      return c;
+	  return c;
     }
     }
   }
@@ -1216,7 +1615,27 @@ start:
 
     for (i = 0; i < n-1; i++) {
 
-        buf[i] = nk_vc_getchar();
+        char next_char = (char) (nk_vc_getchar());
+
+#if SCROLL
+
+		if (next_char == ((char) (KEY_KPUP & 0xFF))) {
+            // buf[i] = 0;
+			nk_vc_scbuf_up();
+			continue;
+		}
+
+		if (next_char == ((char) (KEY_KPDOWN & 0xFF))) {
+            // buf[i] = 0;
+			nk_vc_scbuf_down();
+			continue;
+		}
+		
+		nk_vc_reset_buf();
+
+#endif
+
+		buf[i] = next_char;
 
         if (buf[i] == ASCII_BS) {
 
